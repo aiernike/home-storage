@@ -1,0 +1,45 @@
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: home-storage-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${DB_NAME:-homestorage}
+      POSTGRES_USER: ${DB_USER:-home}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-home123456}
+      TZ: ${TZ:-Asia/Shanghai}
+    volumes:
+      - ./data/postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-home} -d ${DB_NAME:-homestorage}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - home-net
+
+  api:
+    build: .
+    container_name: home-storage-api
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      PORT: ${PORT:-8787}
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_NAME: ${DB_NAME:-homestorage}
+      DB_USER: ${DB_USER:-home}
+      DB_PASSWORD: ${DB_PASSWORD:-home123456}
+      JWT_SECRET: ${JWT_SECRET:-home-storage-change-me}
+      ALLOW_REGISTER: ${ALLOW_REGISTER:-true}
+      TZ: ${TZ:-Asia/Shanghai}
+    ports:
+      - "${PORT:-8787}:${PORT:-8787}"
+    networks:
+      - home-net
+
+networks:
+  home-net:
+    driver: bridge

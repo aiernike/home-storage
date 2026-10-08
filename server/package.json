@@ -1,0 +1,12 @@
+{
+  "name": "home-storage-server",
+  "version": "1.0.0",
+  "description": "家庭收纳同步服务端（部署在 NAS Docker）",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "pg": "^8.11.3"
+  }
+}

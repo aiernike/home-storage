@@ -1,0 +1,426 @@
+/* ==========================================================================
+ * 家庭收纳 · 安卓端布局覆盖
+ * --------------------------------------------------------------------------
+ * 桌面版是「左侧 232px 侧栏 + 右侧主区」的横向布局，直接放进手机竖屏会挤成一团。
+ * 这里把它改造成手机上通行的形态：
+ *   - 侧栏整体移到屏幕底部，变成可横向滑动的标签栏
+ *   - 品牌区 / 位置树 / 同步状态区从侧栏隐藏（位置管理在底部标签里有独立页面）
+ *   - 表单、卡片、弹窗按窄屏重新排布，点击区域放大到适合手指
+ *
+ * 只在移动端加载，桌面端不受影响。
+ * ========================================================================== */
+
+/* ---------------- 整体骨架 ---------------- */
+
+html, body {
+  height: 100%;
+  /* 手机上禁止长按选中文字，避免误触出现选择框 */
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  /* 防止 iOS/部分 WebView 的橡皮筋回弹 */
+  overscroll-behavior: none;
+}
+
+body {
+  font-size: 14px;
+}
+
+/* column-reverse：让「主区」排在视觉上方，「侧栏」落到屏幕底部。
+   用 reverse 而不是调整 DOM 顺序，是为了不破坏桌面端的结构。 */
+.app {
+  flex-direction: column-reverse;
+  /* dvh 会跟随手机浏览器地址栏收缩变化，比 vh 更准；不支持时退回 100vh */
+  height: 100vh;
+  height: 100dvh;
+}
+
+/* 输入框和文本域仍然允许选中，否则没法改字 */
+input, textarea, .selectable {
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+/* ---------------- 底部标签栏 ---------------- */
+
+.sidebar {
+  width: auto;
+  flex: 0 0 auto;
+  flex-direction: row;
+  align-items: stretch;
+  border-right: none;
+  border-top: 1px solid var(--border);
+  /* 正常情况下 7 个标签平分屏宽、不会溢出；
+     留 overflow 只是给极窄屏（320px）兜底，避免内容被硬裁掉 */
+  overflow-x: auto;
+  overflow-y: hidden;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+  /* 适配全面屏底部手势条 */
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+.sidebar::-webkit-scrollbar { display: none; }
+
+/* 这三块在手机上没有位置，收到「设置」页里体现 */
+.brand,
+.loc-panel,
+.side-foot {
+  display: none !important;
+}
+
+.nav {
+  /* 占满整行，让 7 个标签平分宽度 */
+  flex: 1 1 auto;
+  flex-direction: row;
+  gap: 0;
+  padding: 0;
+  min-width: 0;
+}
+
+.nav-item {
+  /*
+   * 这里三个属性缺一不可，踩过的坑：
+   *   flex: 1 1 0  —— 平分宽度
+   *   min-width: 0 —— 不加的话 flex 项不会被压到内容宽度以下
+   *   width: auto  —— 必须覆盖桌面版的 width: 100%。
+   *                   width:100% 配上 flex-shrink:0 会让每个标签撑满整屏，
+   *                   结果 7 个标签排出去 2700 多像素，屏幕上只看得到第一个。
+   */
+  flex: 1 1 0;
+  min-width: 0;
+  width: auto;
+  flex-direction: column;
+  gap: 2px;
+  justify-content: center;
+  align-items: center;
+  /* 触摸目标高度不低于 48px（Material 的最小建议值） */
+  min-height: 54px;
+  padding: 7px 2px;
+  border-radius: 0;
+  text-align: center;
+  font-size: 11px;
+  line-height: 1.25;
+  white-space: nowrap;
+}
+
+.nav-item .ni {
+  width: auto;
+  font-size: 17px;
+  line-height: 1;
+}
+
+/* 手机上没有 hover，去掉悬停底色，只保留选中态 */
+.nav-item:hover { background: none; color: var(--text-2); }
+.nav-item.active { background: var(--accent-soft); }
+.nav-item.active:hover { color: var(--accent); }
+
+/* ---------------- 顶部操作区 ---------------- */
+
+.topbar {
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 10px 12px;
+  padding-top: calc(10px + env(safe-area-inset-top, 0px));
+}
+
+/* 搜索框独占一行，避免被按钮挤到只有几十像素宽 */
+.search-wrap {
+  flex: 1 1 100%;
+  order: 1;
+}
+
+.search-wrap input {
+  padding: 10px 34px 10px 32px;
+}
+
+.top-actions {
+  order: 2;
+  flex: 1 1 100%;
+  gap: 8px;
+}
+
+.top-actions .btn {
+  flex: 1;
+  padding: 10px 12px;
+}
+
+/* ---------------- 内容区 ---------------- */
+
+/*
+ * 这里必须补 min-height: 0。
+ * 桌面版是横向布局，主区只需要 min-width: 0（已有）；改成纵向之后，
+ * 约束轴变成了高度，而 flex 项默认 min-height: auto 不允许被压缩到内容高度以下，
+ * 结果主区会溢出、把底部标签栏顶掉（实测主区 821px > 屏高 807px）。
+ * 加上它之后，滚动交回给 .view 自己处理，整页高度才受控。
+ */
+.main {
+  min-height: 0;
+}
+
+.view {
+  padding: 14px 12px 20px;
+}
+
+.page-head {
+  margin-bottom: 12px;
+}
+
+.page-title { font-size: 17px; }
+
+/* 卡片改为两列固定，窄屏上比 auto-fit 更整齐 */
+.cards {
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+}
+
+.card { padding: 12px; }
+
+/* 桌面版的两列表单在手机上会挤成两条细柱，改成单列 */
+.form-grid {
+  grid-template-columns: 1fr;
+  gap: 10px;
+}
+
+/* ---------------- 弹窗 ---------------- */
+
+.modal-root {
+  /* 弹窗贴着底部弹出，手指更容易够到，也是手机上的常见形态 */
+  align-items: flex-end;
+}
+
+.modal-box {
+  width: 100%;
+  max-width: 100%;
+  /* 留出顶部空间，让用户仍能意识到「下面是弹窗」 */
+  max-height: 88vh;
+  max-height: 88dvh;
+  overflow-y: auto;
+  border-radius: 16px 16px 0 0;
+  padding-bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+}
+
+.modal-box.wide { width: 100%; }
+
+/* 同步冲突列表：手机上「打开/保留/删掉副本」三个按钮横排会把名字挤成竖条，
+   改成名字一行、按钮一行。桌面版的 .conflict-main 是 flex:1，纵向排列后
+   会把文字块整个拉高，必须显式复位。 */
+.conflict-row {
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.conflict-main {
+  flex: none;
+  min-height: 0;
+}
+
+.conflict-acts {
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+
+/* ---------------- 提示条 ---------------- */
+
+.toast-root {
+  /* 屏幕底部有标签栏，提示条要抬高才不会被挡住 */
+  left: 12px;
+  right: 12px;
+  bottom: calc(66px + env(safe-area-inset-bottom, 0px));
+  align-items: stretch;
+}
+
+.toast {
+  max-width: 100%;
+}
+
+/* ---------------- 触摸目标 ---------------- */
+
+.btn {
+  min-height: 40px;
+  padding: 9px 14px;
+}
+
+.btn-sm {
+  min-height: 34px;
+}
+
+/* 小图标按钮在桌面是 20px，手指点不准 */
+.mini-btn {
+  width: 32px;
+  height: 32px;
+  font-size: 16px;
+}
+
+/* ---------------- 列表与面板 ---------------- */
+
+.panel {
+  margin-bottom: 10px;
+}
+
+.panel-head,
+.panel-body {
+  padding-left: 12px;
+  padding-right: 12px;
+}
+
+.item-row {
+  padding: 12px;
+  gap: 10px;
+}
+
+/* 桌面版靠 hover 提示可点，手机上没有 hover，改为按下时给反馈 */
+.item-row:active {
+  background: var(--panel-2);
+}
+
+/* 数量加减按钮在桌面只有 22×24，手指点不准，放大到 36×36 */
+.qty-box button {
+  width: 36px;
+  height: 36px;
+  font-size: 16px;
+}
+
+.qty-box .qty {
+  min-width: 36px;
+  font-size: 14px;
+}
+
+/*
+ * 列表行的「编辑 / 删除」按钮：桌面版是 26×26，手机端原来**原样继承** —— 手指点不准，
+ * 而且垃圾桶还是危险操作，误触就直接删了。
+ *
+ * 放大到 40×40 是权衡出来的：44 会把 .item-right 撑到 216px，
+ * 390px 屏上留给名字的只剩 100px 左右，全被省略号吃掉。
+ * 40 是「点得准」和「名字还看得见」的平衡点。
+ *
+ * ⚠️ 和 .qty-box 一样，桌面端保持紧凑（鼠标精确度高，26px 够用），只有手机端放大。
+ */
+.icon-btn {
+  width: 40px;
+  height: 40px;
+  font-size: 15px;
+  border-radius: 8px;
+}
+
+/*
+ * 位置管理页的四个操作按钮（二维码 / 编辑 / 添加子位置 / 删除）：
+ * 桌面版是 `.tree-actions { opacity: 0 }` + `.tree-row:hover .tree-actions { opacity: 1 }`
+ * —— 靠鼠标悬停才显形，平时藏起来保持整洁。
+ *
+ * 手机上没有 hover。原样继承的话按钮**永远看不见**，
+ * 而 opacity:0 的元素**仍然可以点** —— 用户看不见却会盲点误触，里面第一个就是「删除位置」。
+ * 所以手机端必须常显。这个 bug 在真机截图上表现为「位置行右边一片空白」。
+ */
+.tree-actions {
+  opacity: 1;
+  gap: 2px;
+}
+
+/* 列表右侧的操作按钮在窄屏上换行显示，避免挤压物品名称 */
+.item-row {
+  flex-wrap: wrap;
+}
+
+.item-right {
+  flex-wrap: wrap;
+}
+
+/* 筛选标签也要够大才能点中 */
+.chip {
+  padding: 7px 13px;
+  font-size: 13px;
+}
+
+/* 下拉框在手机上是原生控件，给足高度 */
+.select,
+.input {
+  padding: 9px 10px;
+}
+
+/* 条形图在窄屏上给文字留更多空间 */
+.bar-label {
+  flex: 0 0 auto;
+  max-width: 40%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---------------- 横屏 ---------------- */
+
+/* 横屏时高度紧张，标签栏压缩成一行小尺寸 */
+@media (orientation: landscape) and (max-height: 480px) {
+  .nav-item {
+    min-height: 44px;
+    font-size: 10px;
+    padding: 4px 8px;
+  }
+  .nav-item .ni { font-size: 14px; }
+  .topbar { padding: 6px 12px; }
+  .view { padding: 10px 12px 14px; }
+}
+
+/* ---------------- 物品行在窄屏上的收敛 ---------------- */
+/*
+ * 三类物品（普通/资料/图书）共用同一个行结构，但资料和图书的信息字段多
+ * （位置 + 文号 + 年度 + 单位 + 金额 + 保管期，或者 位置 + 作者 + 出版社 + 年份 + ISBN + 状态）。
+ * 桌面版宽度够，全铺没问题；390px 上会折成三四行，一行占掉一百多像素，
+ * 列表直接没法看。所以窄屏下：信息只显示一行、超出用省略号，名字也不许折行。
+ */
+.item-row {
+  gap: 8px;
+  padding: 10px 12px;
+}
+
+/* 左侧图标/缩略图收小，给文字让出宽度 */
+.item-thumb,
+.item-ico {
+  flex: 0 0 30px;
+  width: 30px;
+  height: 30px;
+}
+.item-ico .item-icon {
+  width: 19px;
+  height: 19px;
+}
+
+/* 名字一行显示，长名字截断（点进详情能看全） */
+.item-name {
+  flex-wrap: nowrap;
+  min-width: 0;
+}
+.item-name > span,
+.item-name > .tag {
+  flex: 0 0 auto;
+  min-width: 0;
+}
+.item-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+/* 信息行：一行 + 省略号。位置永远排在最前面，所以最先看到的一定是「放在哪」 */
+.item-meta {
+  display: block;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.item-meta span {
+  display: inline;
+  margin-right: 10px;
+}
+.item-meta span:last-child {
+  margin-right: 0;
+}
+
+/*
+ * 这里原来还有一段 `.qty-box button { width: 32px; height: 34px }`，
+ * 它把上面那处 36×36 **静默覆盖**了 —— 于是「注释写着放大到 36×36，实际生效 32×34」。
+ * 同一个文件里同一个选择器定义两次，后面的悄悄赢，改的人还以为是 36。
+ * 已删除：数量按钮统一走上面那一处定义（36×36），别再在这里覆盖。
+ */

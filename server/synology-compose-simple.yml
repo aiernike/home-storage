@@ -1,0 +1,64 @@
+# 群晖 Container Manager 极简方案（推荐新手）
+#
+# 特点：不需要构建镜像，不需要 Node.js 基础，
+#       直接使用官方 node 镜像 + 挂载代码文件运行。
+#
+# 使用前提：把 server 文件夹放到 NAS 的 /volume1/docker/home-storage/ 下
+#           即确保 /volume1/docker/home-storage/index.js 存在
+#
+# 三个必须修改的地方已用 ↓↓↓ 标出
+
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: home-storage-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: homestorage
+      POSTGRES_USER: home
+      # ↓↓↓【必改 1】数据库密码 ↓↓↓
+      POSTGRES_PASSWORD: home123456
+      TZ: Asia/Shanghai
+    volumes:
+      - /volume1/docker/home-storage/data/postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U home -d homestorage"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - home-net
+
+  api:
+    image: node:20-alpine
+    container_name: home-storage-api
+    restart: unless-stopped
+    working_dir: /app
+    # 容器启动时先装依赖再启动服务（首次启动约需 1 分钟）
+    command: sh -c "npm install --omit=dev --registry=https://registry.npmmirror.com && node index.js"
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      PORT: 8787
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_NAME: homestorage
+      DB_USER: home
+      # ↓↓↓【必改 2】必须和上面 POSTGRES_PASSWORD 完全一致 ↓↓↓
+      DB_PASSWORD: home123456
+      # ↓↓↓【必改 3】令牌密钥，敲一串随机字符 ↓↓↓
+      JWT_SECRET: please-change-this-to-a-random-string
+      ALLOW_REGISTER: "true"
+      TZ: Asia/Shanghai
+    volumes:
+      # 把 server 目录挂载进容器，代码改动无需重建镜像
+      - /volume1/docker/home-storage:/app
+    ports:
+      - "8787:8787"
+    networks:
+      - home-net
+
+networks:
+  home-net:
+    driver: bridge

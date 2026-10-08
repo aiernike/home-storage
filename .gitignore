@@ -1,0 +1,15 @@
+node_modules/
+dist/
+screenshots/
+server/data/
+server/.env
+*.log
+*.tmp
+*.bak
+
+# 安卓端构建中间产物（源码和 assets 是要提交的，见 mobile/README 说明）
+mobile/build/
+mobile/dist/
+
+# 注意：mobile/home-storage.jks 是应用的签名证书，必须提交/保留。
+# 以后升级应用要用同一个证书签名，丢了就只能卸载重装（本地数据会一起丢）。

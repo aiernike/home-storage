@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:;">
+<title>家庭收纳</title>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<div class="app">
+
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="brand-mark">收</div>
+      <div class="brand-text">
+        <div class="brand-title">家庭收纳</div>
+        <div class="brand-sub" id="brandSub">本地数据</div>
+      </div>
+    </div>
+
+    <nav class="nav">
+      <button class="nav-item active" data-view="dashboard"><span class="ni">▦</span>总览</button>
+      <button class="nav-item" data-view="items"><span class="ni">▤</span>物品清单</button>
+      <button class="nav-item" data-view="docs"><span class="ni">❐</span>办公资料</button>
+      <button class="nav-item" data-view="books"><span class="ni">▯</span>图书</button>
+      <button class="nav-item" data-view="scan"><span class="ni">▥</span>扫码录入</button>
+      <button class="nav-item" data-view="expiry"><span class="ni">◷</span>保质期</button>
+      <button class="nav-item" data-view="locations"><span class="ni">◱</span>位置管理</button>
+      <button class="nav-item" data-view="stats"><span class="ni">◔</span>统计</button>
+      <button class="nav-item" data-view="settings"><span class="ni">⚙</span>设置</button>
+    </nav>
+
+    <div class="loc-panel">
+      <div class="loc-head">
+        <span>收纳位置</span>
+        <button class="mini-btn" id="btnQuickLoc" title="新增位置">＋</button>
+      </div>
+      <div class="loc-tree" id="locTree"></div>
+    </div>
+
+    <div class="side-foot">
+      <div class="sync-chip" id="syncChip">
+        <span class="dot"></span><span id="syncText">未开启同步</span>
+      </div>
+      <button class="ghost-btn" id="btnSyncNow">立即同步</button>
+    </div>
+  </aside>
+
+  <main class="main">
+    <header class="topbar">
+      <div class="search-wrap">
+        <span class="search-icon">⌕</span>
+        <input type="text" id="globalSearch" placeholder="搜索物品名称、条码、备注或位置…" autocomplete="off">
+        <button class="clear-btn" id="clearSearch" hidden>✕</button>
+      </div>
+      <div class="top-actions">
+        <button class="btn btn-primary" id="btnAddItem">＋ 新增物品</button>
+        <button class="btn" id="btnQuickScan">扫码</button>
+      </div>
+    </header>
+
+    <section class="view" id="view-dashboard"></section>
+    <section class="view" id="view-items" hidden></section>
+    <section class="view" id="view-docs" hidden></section>
+    <section class="view" id="view-books" hidden></section>
+    <section class="view" id="view-scan" hidden></section>
+    <section class="view" id="view-expiry" hidden></section>
+    <section class="view" id="view-locations" hidden></section>
+    <section class="view" id="view-stats" hidden></section>
+    <section class="view" id="view-settings" hidden></section>
+  </main>
+</div>
+
+<div class="modal-root" id="modalRoot" hidden>
+  <div class="modal-mask" id="modalMask"></div>
+  <div class="modal-box" id="modalBox"></div>
+</div>
+
+<div class="toast-root" id="toastRoot"></div>
+
+<!-- 条码识别库（纯 JS，不依赖系统组件）。
+     浏览器自带的 BarcodeDetector 在很多环境不可用（安卓 WebView、Windows 版 Chromium、
+     没有谷歌服务的手机），用它做主力识别会「摄像头能开但永远扫不出来」。 -->
+<script src="js/zxing.min.js"></script>
+<!-- 二维码生成/解析：复用 zxing.min.js 里自带的编码器（BrowserQRCodeSvgWriter），无额外依赖 -->
+<script src="js/qr.js"></script>
+<!-- 内置矢量物品图标库（手绘 SVG，无外部图片、无网络请求）。
+     必须在 util/views 之前，物品行渲染时要按 key 取图标 -->
+<script src="js/icons.js"></script>
+<script src="js/util.js"></script>
+<script src="js/components.js"></script>
+<script src="js/views.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>

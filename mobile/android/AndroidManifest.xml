@@ -1,0 +1,99 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  家庭收纳 · 安卓端清单
+
+  几个关键点，改动前请先看这里：
+
+  · usesCleartextTraffic="true"
+      家用 NAS 的后端通常是 http（局域网内没有证书），Android 9 起默认禁止明文
+      http 请求，不开这个开关同步会直接失败。
+
+  · minSdkVersion 21
+      页面里的摄像头、evaluateJavascript、WebResourceResponse 带状态码的构造
+      方法都要求 21 以上。
+
+  · configChanges 里带上 orientation / screenSize
+      不加的话，手机横竖屏切换会重建 Activity，WebView 被销毁重来，
+      用户正在填的表单就没了。数据虽然存在本地不会丢，但体验很差。
+
+  · CAMERA 权限
+      扫码录入要用摄像头。用户不授权也能用，只是扫码会退化成手动输入。
+
+  · 存储权限只在 Android 9 及以下需要
+      Android 10 起导出走 MediaStore，不需要这个权限，所以标了 maxSdkVersion="28"。
+
+  · 这里「故意不写」android:versionCode / android:versionName
+      版本号只有一个源头：根 package.json 的 version。build-apk.js 会把它换算成
+      versionCode（1.1.0 换算成 10100），再用 aapt2 link 的 version-code / version-name
+      参数传进来。注意 XML 注释里不能出现两个连续减号，所以上面这两个参数名不写前缀。
+      以前这里写死 versionCode="1" / versionName="1.0.0"，而清单里的显式属性「会盖掉」
+      命令行参数 —— 于是 apk 文件名叫「家庭收纳-1.1.0.apk」，装到手机上却显示 1.0.0，
+      versionCode 也永远是 1（系统认不出这是升级）。删掉这两行，参数才真正生效。
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="com.home.storage">
+
+    <uses-sdk
+        android:minSdkVersion="21"
+        android:targetSdkVersion="29" />
+
+    <!-- 同步需要联网 -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+
+    <!-- 扫码录入 -->
+    <uses-permission android:name="android.permission.CAMERA" />
+
+    <!-- 导出备份（仅 Android 9 及以下需要） -->
+    <uses-permission
+        android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+        android:maxSdkVersion="28" />
+
+    <!-- 碰一碰定位收纳位置（仅支持 NFC 的手机；不支持也能正常用其他功能） -->
+    <uses-permission android:name="android.permission.NFC" />
+
+    <!-- 没有摄像头的设备也能装（扫码会自动退化为手动输入） -->
+    <uses-feature
+        android:name="android.hardware.camera"
+        android:required="false" />
+    <uses-feature
+        android:name="android.hardware.camera.autofocus"
+        android:required="false" />
+
+    <!-- NFC 不是必需硬件：没有 NFC 的手机只是不能用「碰一碰」，其余功能不受影响 -->
+    <uses-feature
+        android:name="android.hardware.nfc"
+        android:required="false" />
+
+    <application
+        android:label="@string/app_name"
+        android:icon="@mipmap/ic_launcher"
+        android:theme="@style/AppTheme"
+        android:hardwareAccelerated="true"
+        android:usesCleartextTraffic="true"
+        android:allowBackup="true"
+        android:supportsRtl="false">
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:launchMode="singleTask"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden|uiMode"
+            android:windowSoftInputMode="adjustResize">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+
+            <!-- 应用没在运行时，碰一下贴了标签的收纳位置也能直接打开并跳到对应位置。
+                 用 TECH_DISCOVERED 覆盖绝大多数空白标签（只有 UID、没有 NDEF 内容的标签）。 -->
+            <intent-filter>
+                <action android:name="android.nfc.action.TECH_DISCOVERED" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+            <meta-data
+                android:name="android.nfc.action.TECH_DISCOVERED"
+                android:resource="@xml/nfc_tech_filter" />
+        </activity>
+    </application>
+</manifest>

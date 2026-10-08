@@ -1,0 +1,92 @@
+{
+  "name": "home-storage",
+  "version": "1.1.0",
+  "description": "家庭收纳管理 - 位置信息、条码录入、保质期提醒，支持 NAS 多设备同步",
+  "main": "src/main/main.js",
+  "author": "",
+  "license": "MIT",
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron . --dev",
+    "test": "node test/test-store.js && node test/test-isbn.js && node test/test-ui.js && node test/test-server.js && node test/test-scan.js && node test/test-qr.js && node test/test-compose.js && node test/test-guide.js && node test/test-packaging.js && node test/test-mobile.js && node test/test-mobile-ui.js && node test/test-pwa.js && node test/test-e2e.js",
+    "test:store": "node test/test-store.js",
+    "test:isbn": "node test/test-isbn.js",
+    "test:ui": "node test/test-ui.js",
+    "test:server": "node test/test-server.js",
+    "test:scan": "node test/test-scan.js",
+    "test:compose": "node test/test-compose.js",
+    "test:guide": "node test/test-guide.js",
+    "test:packaging": "node test/test-packaging.js",
+    "test:mobile": "node test/test-mobile.js",
+    "test:mobile-ui": "node test/test-mobile-ui.js",
+    "test:pwa": "node test/test-pwa.js",
+    "test:qr": "node test/test-qr.js",
+    "test:e2e": "node test/test-e2e.js",
+    "icon:preview": "node scripts/icon-preview.js",
+    "server": "node server/index.js",
+    "server:docker": "docker compose -f server/docker-compose.yml up -d --build",
+    "build:win": "electron-builder --win --x64",
+    "build:linux": "electron-builder --linux --x64",
+    "build:mac": "electron-builder --mac --x64",
+    "build:apk": "node mobile/build-apk.js",
+    "build:mobile-assets": "node mobile/build-mobile.js",
+    "deploy:diff": "node scripts/nas-diff.js",
+    "review": "node scripts/review-check.js"
+  },
+  "devDependencies": {
+    "@zxing/library": "^0.21.3",
+    "bcryptjs": "^2.4.3",
+    "electron": "^31.0.0",
+    "electron-builder": "^24.13.3",
+    "jsdom": "^30.0.1",
+    "jsonwebtoken": "^9.0.2",
+    "pg": "^8.11.3"
+  },
+  "build": {
+    "appId": "com.home.storage",
+    "productName": "家庭收纳",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "src/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "server",
+        "to": "server",
+        "filter": [
+          "index.js",
+          "package.json",
+          "Dockerfile",
+          "docker-compose.yml",
+          "synology-compose.yml",
+          "synology-compose-simple.yml",
+          ".env.example",
+          "deploy.sh"
+        ]
+      }
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowElevation": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "家庭收纳",
+      "artifactName": "家庭收纳-安装程序-${version}.${ext}"
+    }
+  }
+}

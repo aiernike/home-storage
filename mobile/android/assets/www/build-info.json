@@ -1,0 +1,22 @@
+{
+  "generated_at": "2026-10-07 16:08:45",
+  "sources": {
+    "src/main/store.js": "347950f85cac4250",
+    "src/main/sync.js": "c7a45c0c5c06fa72",
+    "src/main/isbn.js": "4ce73708e2f7c0c5",
+    "src/renderer/index.html": "f78962b77ecad4a6",
+    "src/renderer/css/style.css": "900023fb1379495a",
+    "src/renderer/js/zxing.min.js": "d7cc8f69dd70bdcf",
+    "src/renderer/js/qr.js": "9495512aa2e56658",
+    "src/renderer/js/icons.js": "1bae192236ef208f",
+    "src/renderer/js/util.js": "19c72fb529d4d8b6",
+    "src/renderer/js/components.js": "781a3901f6e39e2f",
+    "src/renderer/js/views.js": "2e8da2eefaf2b4d8",
+    "src/renderer/js/app.js": "bc1c37f14b10c768",
+    "mobile/platform/01-shim.js": "453f8a8135bc6839",
+    "mobile/platform/02-mobile.css": "9a9d70bcd19125c5",
+    "mobile/platform/03-bootstrap.js": "363ffa357cad1b01",
+    "mobile/icon-lib.js": "ab046f8c6562f13a"
+  },
+  "bundle_bytes": 107364
+}

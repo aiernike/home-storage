@@ -1,0 +1,58 @@
+# 群晖 Container Manager 专用配置
+#
+# 使用说明：
+#   1. 把 DB_PASSWORD 和 JWT_SECRET 改成自己的值（见下方注释）
+#   2. JWT_SECRET 随便按键盘敲 40 位左右
+#   3. 整个内容粘贴到 Container Manager → 项目 → 创建
+#
+# 注意：本文件不使用 ${变量} 语法，因为 Container Manager 的
+#       项目界面不会自动加载 .env 文件，用变量会导致取值失败。
+
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: home-storage-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: homestorage
+      POSTGRES_USER: home
+      # ↓↓↓ 改这里：数据库密码，字母数字组合即可 ↓↓↓
+      POSTGRES_PASSWORD: home123456
+      TZ: Asia/Shanghai
+    volumes:
+      - /volume1/docker/home-storage/data/postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U home -d homestorage"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - home-net
+
+  api:
+    build: .
+    container_name: home-storage-api
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      PORT: 8787
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_NAME: homestorage
+      DB_USER: home
+      # ↓↓↓ 改这里：必须和上面 POSTGRES_PASSWORD 完全一致 ↓↓↓
+      DB_PASSWORD: home123456
+      # ↓↓↓ 改这里：令牌密钥，敲一串随机字符，不要留默认值 ↓↓↓
+      JWT_SECRET: please-change-this-to-a-random-string
+      ALLOW_REGISTER: "true"
+      TZ: Asia/Shanghai
+    ports:
+      - "8787:8787"
+    networks:
+      - home-net
+
+networks:
+  home-net:
+    driver: bridge

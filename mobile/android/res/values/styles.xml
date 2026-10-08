@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  用系统自带的 Material 主题即可，不需要引入 AppCompat：
+  整个应用只有一个 WebView，没有原生控件要美化。
+  免去 AppCompat 也让打包不依赖任何第三方库（不用联网拉 aar）。
+-->
+<resources>
+    <style name="AppTheme" parent="@android:style/Theme.Material.Light.NoActionBar">
+        <!-- 状态栏颜色跟页面顶栏一致，避免顶部出现一条突兀的深色带 -->
+        <item name="android:statusBarColor">#FFFFFF</item>
+        <item name="android:windowBackground">#F5F5F3</item>
+        <item name="android:navigationBarColor">#FFFFFF</item>
+    </style>
+</resources>
