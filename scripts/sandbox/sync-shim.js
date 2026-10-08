@@ -1,8 +1,8 @@
 'use strict';
-/* 临时工具（仅本沙箱用）：把异步 spawn 包成 spawnSync 的替身。
- * 原因：本环境 spawnSync/execSync/execFileSync 一律 EBUSY，只有异步 spawn 可用。
- * 用法：require('./hs-syncshim.js').patch(); 然后再 require 目标脚本。
- * 交付物不应依赖它 —— 涛哥本机 spawnSync 正常，直接 node mobile/build-apk.js 即可。
+/* 受限环境专用工具：把异步 spawn 包成 spawnSync 的替身。
+ * 原因：某些受限环境里 spawnSync/execSync/execFileSync 一律 EBUSY，只有异步 spawn 可用。
+ * 用法：require('./sync-shim.js').patch(); 然后再 require 目标脚本（见同目录 run-apk.js）。
+ * ⚠️ 正常环境用不到它 —— 本机 spawnSync 正常时直接 node mobile/build-apk.js 即可。
  */
 const fs = require('fs');
 const os = require('os');

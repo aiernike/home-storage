@@ -60,8 +60,21 @@ ok('extraResources 含群晖配置', extra.includes('synology-compose'));
 // ---- 3. 依赖分类 ----
 ok('运行时不依赖原生模块（dependencies 为空）',
   !pkg.dependencies || Object.keys(pkg.dependencies).length === 0);
-ok('server 用依赖放在 devDependencies',
-  pkg.devDependencies && pkg.devDependencies.pg && pkg.devDependencies.bcryptjs);
+const devDeps = pkg.devDependencies || {};
+// server 端要用的包必须声明在 devDependencies：放 dependencies 会被 electron-builder
+// 打进安装包，而服务端是单独部署到 NAS 的（目前只有 pg 一个）。
+ok('server 用依赖（pg）放在 devDependencies', !!devDeps.pg);
+// bcryptjs / jsonwebtoken 曾经声明过，但全项目没有一处 require ——
+// 服务端用的是内置 crypto 的 scrypt 加自制 HMAC-SHA256 JWT。
+// 留着只会让人误以为在用它们，这条防止被"顺手加回来"。
+ok('没有残留的无用依赖（bcryptjs / jsonwebtoken）',
+  !devDeps.bcryptjs && !devDeps.jsonwebtoken);
+// ⚠️ @zxing/library 必须保留：它是 test-scan.js 的**独立参照解码器**，
+//    用来交叉验证仓库里那份 vendored 的 zxing.min.js 生成的条码是对的。
+//    它一旦不在，test-scan 会直接 process.exit(0) 跳过整套断言 ——
+//    静默少跑测试比测试失败危险得多。
+ok('@zxing/library 保留（test-scan 的参照解码器，删了会静默少跑一套）',
+  !!devDeps['@zxing/library']);
 
 // ---- 4. 打包脚本 ----
 ok('打包.bat 存在', exists('打包.bat'));

@@ -1,10 +1,14 @@
 'use strict';
-/* 临时变异验证（仅本沙箱用）：把 store.js 改坏，确认新加的断言会红、且只红该红的。
- * 依赖 hs-syncshim.js 绕过本环境 spawnSync=EBUSY 的限制。 */
+/* 变异验证（反向验证）：把 store.js 改坏，确认新加的断言会红、且只红该红的。
+ * 依赖同目录的 sync-shim.js 绕过受限环境里 spawnSync=EBUSY 的限制。
+ * 用法：node scripts/sandbox/mutate-store.js（从任意目录执行都行）
+ */
+const path = require('path');
 const fs = require('fs');
-const { spawnSyncShim } = require('./hs-syncshim.js');
+const { spawnSyncShim } = require('./sync-shim.js');
 
-const FILE = 'src/main/store.js';
+const ROOT = path.join(__dirname, '..', '..');
+const FILE = path.join(ROOT, 'src/main/store.js');
 const orig = fs.readFileSync(FILE, 'utf8');
 
 const MUTS = [
@@ -48,7 +52,7 @@ MUTS.forEach((m, i) => {
     return;
   }
   fs.writeFileSync(FILE, orig.replace(m.from, m.to), 'utf8');
-  const r = spawnSyncShim(process.execPath, ['test/test-store.js'], { cwd: process.cwd() });
+  const r = spawnSyncShim(process.execPath, ['test/test-store.js'], { cwd: ROOT });
   fs.writeFileSync(FILE, orig, 'utf8');
   const out = (r.stdout || '') + (r.stderr || '');
   const lines = out.split(/\r?\n/);

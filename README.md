@@ -138,9 +138,11 @@ home-storage/
 │   ├── fetch-tool.js    打包辅助：下载构建工具包
 │   ├── icon-preview.js  开发辅助：把图标库渲染成一张图，改图标后用它亲眼检查
 │   ├── nas-diff.js      开发辅助：比对本地与 NAS 上的网页资源，列出该传哪几个文件
-│   └── review-check.js  开发辅助：代码规范自检（npm run review）
+│   ├── review-check.js  开发辅助：代码规范自检（npm run review）
+│   └── sandbox/         受限环境专用工具（spawnSync 不可用时才需要，正常开发可整个删掉）
+├── .gitattributes       行尾策略（Windows 版 Git 默认 autocrlf=true，靠它压住）
 ├── screenshots/         界面截图（电脑端 + mobile/ 手机端）
-├── test/                十三套自动化测试（共 1454 项，npm test 一次跑完）
+├── test/                十三套自动化测试（共 1456 项，npm test 一次跑完）
 ├── 打包.bat             Windows 一键打包脚本
 ├── 代码规范.md           改代码前先看：项目硬约束 + Review 检查清单
 ├── 工程实践参考.md        工程实践与外部参考
@@ -158,7 +160,7 @@ cd home-storage
 npm install
 npm start              # 启动
 npm run dev            # 带开发者工具
-npm test               # 跑全部测试（1454 项）
+npm test               # 跑全部测试（1456 项）
 npm run review         # 代码规范自检（产物有没有重建、行尾、写死的版本号…）
 npm run icon:preview   # 把图标库渲染成图，改过 icons.js 后用它亲眼检查
 ```

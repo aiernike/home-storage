@@ -104,8 +104,13 @@ let ZXing;
 try {
   ZXing = require(path.join(ROOT, 'node_modules', '@zxing', 'library', 'cjs'));
 } catch (e) {
-  console.log('未安装 @zxing/library，跳过条码识别测试');
-  process.exit(0);
+  // ⚠️ 这里**不能静默跳过**：@zxing/library 是本套件的参照解码器，
+  //    它不在的话下面所有断言会凭空消失，而退出码仍是 0（看起来"通过"）。
+  //    "静默少跑测试"比"测试失败"危险得多 —— 失败至少有人会去看。
+  console.error('\n[致命] 缺少 @zxing/library —— 条码识别测试无法进行。');
+  console.error('       它是本套件的参照解码器，用来交叉验证 zxing.min.js 生成的条码。');
+  console.error('       修复：在项目根目录执行 npm install');
+  process.exit(1);
 }
 
 const {

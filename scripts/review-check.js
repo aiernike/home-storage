@@ -284,6 +284,31 @@ section('[5] 行尾（规范 §二 · 行尾）');
 
   if (extraCrlf.length === 0) ok('基线之外的文件都是 LF');
   else warnIt('这些文件用了 CRLF（基线之外）', extraCrlf.join(', ') + '\n         不是错，但和多数文件不一致；新建文档建议用 LF');
+
+  // ---- .gitattributes 与基线必须一致 ----
+  // Windows 版 Git 默认 core.autocrlf=true，检出时会把所有 LF 文件转成 CRLF。
+  // .gitattributes 里的 eol 属性优先级更高，是唯一能压住它的东西 ——
+  // 所以这份文件和 CRLF_BASELINE 是同一份知识的两个副本，漂移了本地看不出来，
+  // 只有别人克隆下来才会发现行尾全乱。
+  if (!exists('.gitattributes')) {
+    warnIt('没有 .gitattributes',
+      'core.autocrlf=true 的机器上检出会把所有 LF 文件变成 CRLF，行尾基线当场失效');
+  } else {
+    const declared = read('.gitattributes').split(/\r?\n/)
+      .filter((l) => l.trim() && !l.trim().startsWith('#'))
+      .filter((l) => /\beol=crlf\b/.test(l))
+      .map((l) => l.trim().split(/\s+/)[0])
+      .sort();
+    const expected = [...CRLF_BASELINE].sort();
+    if (JSON.stringify(declared) === JSON.stringify(expected)) {
+      ok('.gitattributes 声明的 CRLF 文件与基线一致（' + declared.length + ' 个）');
+    } else {
+      bad('.gitattributes 与行尾基线不一致',
+        '声明：' + declared.join(', ') +
+        '\n         基线：' + expected.join(', ') +
+        '\n         两处必须一致 —— 只改一边，别人克隆下来行尾就乱了');
+    }
+  }
 }
 
 /* ==========================================================================
