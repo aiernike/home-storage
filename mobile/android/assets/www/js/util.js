@@ -306,8 +306,21 @@ const U = {
     图书: 'book', 教材: 'book', 期刊: 'book'
   },
 
+  /**
+   * 分类属于哪个栏目（goods / doc / book）。
+   *
+   * 两种 key 都要认：
+   *   - 预置分类：短名（「食品」「合同」「图书」…），查 CAT_KIND 表；
+   *   - 用户新建的分类：`栏目:随机串`（store 的 categories.save 生成），
+   *     前缀就是栏目名 —— 不这么写的话，用户自建的「会计凭证」只会出现在
+   *     物品页的分类下拉里，在办公资料页怎么都找不到。
+   * 对不上的（含老数据里的空 key）一律按物品处理。
+   */
   catKindOf(catKey) {
-    return U.CAT_KIND[String(catKey || '')] || 'goods';
+    const k = String(catKey || '');
+    const m = /^(goods|doc|book):/.exec(k);
+    if (m) return m[1];
+    return U.CAT_KIND[k] || 'goods';
   },
 
   /** 该栏目该显示哪些分类 */

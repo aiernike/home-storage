@@ -42,14 +42,26 @@ const C = {
    * fields: [{ key, label, type, value, options, required, placeholder, hint, full, min, max, step, attrs }]
    * onSubmit(values) 返回 false 可阻止关闭；抛错会显示错误
    */
-  form({ title, fields, okText = '保存', wide = false, onSubmit, extraHtml = '', onMount }) {
+  form({ title, fields, okText = '保存', wide = false, onSubmit, extraHtml = '', onMount, compactHints = false }) {
     return new Promise((resolve) => {
       const box = document.getElementById('modalBox');
       box.className = 'modal-box' + (wide ? ' wide' : '');
+      /**
+       * compactHints（方案 E）：把字段说明从「压在字段下面的一行灰字」收进「?」里。
+       * 7 个字段配 7 行说明，弹窗显得又长又啰嗦 —— 但说明本身不能删，
+       * 所以收起来而不是扔掉：桌面悬停有 title，手机点「?」展开。
+       * ⚠️ 只给物品编辑器开（那里字段最多）。别的表单字段少，灰字摊开更直接。
+       */
       const renderField = (f) => {
         const v = f.value == null ? '' : f.value;
         const cls = f.full ? 'form-row full' : 'form-row';
-        const label = `<label class="form-label">${U.esc(f.label)}${f.required ? '<span class="req">*</span>' : ''}</label>`;
+        const help = compactHints && f.hint
+          ? `<span class="form-help" data-help-for="${f.key}" title="${U.esc(f.hint)}">?</span>`
+          : '';
+        const label = `<label class="form-label">${U.esc(f.label)}${f.required ? '<span class="req">*</span>' : ''}${help}</label>`;
+        const hintHtml = f.hint
+          ? `<div class="form-hint"${compactHints ? ' hidden' : ''} data-hint-for="${f.key}">${U.esc(f.hint)}</div>`
+          : '';
         let input;
         if (f.type === 'select') {
           const opts = (f.options || [])
@@ -82,7 +94,7 @@ const C = {
             ${f.min != null ? `min="${f.min}"` : ''} ${f.max != null ? `max="${f.max}"` : ''}
             ${f.step != null ? `step="${f.step}"` : ''} ${f.attrs || ''}>`;
         }
-        return `<div class="${cls}">${label}${input}${f.hint ? `<div class="form-hint">${U.esc(f.hint)}</div>` : ''}</div>`;
+        return `<div class="${cls}">${label}${input}${hintHtml}</div>`;
       };
 
       box.innerHTML = `
@@ -99,6 +111,16 @@ const C = {
         </div>`;
 
       C._open();
+      // 「?」点一下展开/收起字段说明（方案 E）。手机上没有 hover，
+      // 只给 title 等于「说明写了但永远看不到」，所以必须能点开。
+      box.querySelectorAll('.form-help').forEach((h) => {
+        h.onclick = () => {
+          const t = box.querySelector(`[data-hint-for="${h.dataset.helpFor}"]`);
+          if (!t) return;
+          t.hidden = !t.hidden;
+          h.classList.toggle('on', !t.hidden);
+        };
+      });
       const close = (v) => {
         C.close();
         resolve(v);

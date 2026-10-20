@@ -274,6 +274,32 @@ function finish() {
   ok('点「知道了」能把提示条关掉', warn.closedAfterClick === true,
     warn.hasClose ? '' : '没有关闭按钮，用户只能看着它一直挡在上面');
 
+  // 物品行第二行（方案 C）：位置 · 字段 · 标签。
+  // 这几条只能在真实浏览器里量 —— jsdom 不做布局，flex/nowrap/省略号全都测不出来。
+  console.log('\n[MUI-3b] 物品行第二行（信息分层）');
+  const mf = r.metaFit || {};
+  ok('带条码+备注的物品行渲染出来了', mf.found === true, JSON.stringify(mf));
+  ok('第二行只有一行（折成两三行的话列表就没法扫了）',
+    mf.lines === 1, `${mf.metaHeight}px 高 / 单行 ${mf.locHeight}px → 约 ${mf.lines} 行`);
+  ok('位置排在最前面', mf.locFirst === true);
+  // 这条是「位置颜色更深一档」的**真实**验证（test-ui 里只能对 CSS 文本做正则）
+  ok('位置的颜色确实比其余字段深（取的是计算后的颜色）', mf.locDimmer === true,
+    `位置 ${mf.locColor} / 整行 ${mf.metaColor}`);
+  ok('多个字段用「·」连成一段', mf.hasSeparator === true);
+  ok('标签在屏幕上真的占到了宽度（没被挤成 0）', mf.tagW > 0, `宽 ${mf.tagW}px`);
+  ok('标签有底色（没底色就看不出是个标签）',
+    !!mf.tagBg && mf.tagBg !== 'rgba(0, 0, 0, 0)' && mf.tagBg !== 'transparent',
+    `background=${mf.tagBg}`);
+  // 手机上曾经有一条 `.item-meta span { display: inline; margin-right: 10px }`。
+  // 它的优先级比 .item-meta-loc / .item-meta-fields 高，会**静默**盖掉它们的 display。
+  // 这条规则「有没有被加回来」在 display 上看不出来（flex 子项会被 blockify），
+  // 但 10px 外边距一定会出现在计算样式里 —— 所以量的是它。
+  ok('信息行各段没有多余的 10px 外边距（那条宽泛规则没被加回来）',
+    mf.locMargin === '0px' && mf.fieldsMargin === '0px',
+    `位置 ${mf.locMargin} / 字段 ${mf.fieldsMargin}`);
+  ok('整行没有被撑出屏幕', (mf.rowRight || 0) <= (mf.viewW || 0) + 1,
+    `行右边 ${mf.rowRight} / 屏宽 ${mf.viewW}`);
+
   // 位置管理页的操作按钮：桌面版靠 `.tree-row:hover` 才把 opacity 从 0 提到 1。
   // 手机上没有 hover —— 原样继承的话按钮**永远看不见**，但 opacity:0 的元素**仍然能点**，
   // 于是用户看不见却会盲点误触，而里面第一个就是「删除位置」。

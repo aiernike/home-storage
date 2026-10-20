@@ -19,6 +19,27 @@
   --blue-soft: #e6f1fb;
   --radius: 12px;
   --radius-sm: 8px;
+
+  /* ---- 字号令牌（方案 F）----
+     加令牌之前这里散着 10 种硬编码字号（9/10/11/12/13/14/15/16/22/30），
+     改一个「次要文字」得先翻遍全文件找哪些是 12、哪些是 11。
+     收敛成 6 档，语义按「这块字是干嘛的」定，不按大小定。
+     ⚠️ 策略是**渐进式**：新写的样式一律用令牌；旧规则改到哪块顺手换哪块。
+     全量替换 500 多行 CSS 风险太高，收益却一样（见《UI设计评审.md》方案 F）。
+     9/10/14/15 这几个零散值属于待收敛的，碰到就并到最近的一档。 */
+  --fs-xs: 11px;   /* 辅助信息、物品行第二行 */
+  --fs-sm: 12px;   /* 次要文字、标签、小按钮 */
+  --fs-md: 13px;   /* 正文、表单控件（body 的基准值） */
+  --fs-lg: 16px;   /* 小标题 */
+  --fs-xl: 22px;   /* 页面标题 */
+  --fs-2xl: 30px;  /* 统计数字 */
+
+  /* ---- 间距令牌（方案 F）---- */
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 24px;
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -206,10 +227,25 @@ input, select, textarea { outline: none; }
 .chip-group { display: flex; gap: 6px; flex-wrap: wrap; }
 .chip {
   padding: 5px 11px; border-radius: 999px; border: 1px solid var(--border);
-  color: var(--text-2); background: var(--panel); font-size: 12px;
+  color: var(--text-2); background: var(--panel); font-size: var(--fs-sm);
 }
 .chip:hover { border-color: var(--border-strong); }
 .chip.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+
+/* 筛选区的维度标签（方案 D）
+   三行 pill 原来长得一模一样，分不清「普通物品」是类型、「即将到期」是保质期。
+   每行前面钉一个 2 个字的小标题，行与行之间立刻有了结构。
+   ⚠️ 标签是 #kindChips 等容器**外面**的兄弟节点 —— 不能塞进容器里，
+   容器里的 .chip 数量被测试用来判断「筛选条渲染全了没有」。 */
+.chip-row { display: flex; align-items: flex-start; gap: var(--sp-2); }
+.chip-row + .chip-row { margin-top: 9px; }
+.chip-dim {
+  flex: 0 0 auto; font-size: var(--fs-xs); color: var(--text-3);
+  line-height: 26px; letter-spacing: .5px;
+  /* 定宽：标签长度不一样（类型 / 保质期），不定宽的话各行 pill 的起始位置对不齐 */
+  min-width: 38px;
+}
+.chip-row .chip-group { flex: 1 1 auto; min-width: 0; }
 
 /* 物品列表 */
 .item-list { display: flex; flex-direction: column; }
@@ -233,8 +269,30 @@ input, select, textarea { outline: none; }
 .item-name { font-weight: 500; display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
 /* 名字单独包一层，长名字可以截断而不是把标签挤走 */
 .item-title { flex: 0 1 auto; min-width: 0; }
-.item-meta { font-size: 11px; color: var(--text-3); margin-top: 3px; display: flex; gap: 12px; flex-wrap: wrap; }
-.item-meta span { display: inline-flex; align-items: center; gap: 4px; }
+/* 物品行第二行：位置 · 若干字段 · 状态标签（方案 C · 信息分层）
+   原来是一串同色同重的 span 用 12px 间距铺开，主次不分、读起来也散；
+   现在：位置最前且颜色深一档 → 中间字段用「·」连成一段 → 状态类字段做成标签。
+   整行不换行、超出用省略号：第二行一旦折成两三行，列表就没法快速扫了。
+   ⚠️ 和《UI设计评审.md》方案 C 的差别：那里写的是「超过 3 个字段就截断」，
+   落地改成**按宽度**用省略号截断。硬砍到 3 个会把「金额」这类产品自己在卡片里
+   强调的字段从行里抹掉（资料页的测试就在断言它可见），而目标（别糊成一团）一样达到。 */
+.item-meta {
+  font-size: var(--fs-xs); color: var(--text-3); margin-top: 3px;
+  display: flex; align-items: center; gap: var(--sp-2); overflow: hidden;
+}
+/* 位置是第一信息：颜色比其余字段深一档，一眼能找到「放哪了」 */
+.item-meta-loc { color: var(--text-2); flex: 0 1 auto; min-width: 0; max-width: 42%; }
+/* 中间字段：一整段，靠「·」分隔，比原来 12px 的空隙紧凑得多 */
+.item-meta-fields { flex: 1 1 auto; min-width: 0; }
+.item-meta-loc,
+.item-meta-fields { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* 标签不参与压缩，永远完整可见（要压缩的是中间那段文字） */
+.item-meta .tag { flex: 0 0 auto; }
+/* 条形码/ISBN 是 13 位数字，手机上很容易把整行吃光 —— 给它一个上限，超了自己省略 */
+.item-meta .tag-barcode {
+  flex: 0 1 auto; min-width: 0; max-width: 150px;
+  display: inline-block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
 .item-right { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; }
 .qty-box {
   display: flex; align-items: center; gap: 1px;
@@ -245,8 +303,8 @@ input, select, textarea { outline: none; }
 .qty-box .qty { min-width: 30px; text-align: center; font-size: 12px; background: var(--panel); }
 
 .tag {
-  display: inline-flex; align-items: center; gap: 4px;
-  padding: 2px 7px; border-radius: 5px; font-size: 11px; font-weight: 400;
+  display: inline-flex; align-items: center; gap: var(--sp-1);
+  padding: 2px 7px; border-radius: 5px; font-size: var(--fs-xs); font-weight: 400;
 }
 .tag-expired { background: var(--red-soft); color: var(--red); }
 .tag-soon { background: var(--amber-soft); color: var(--amber); }
@@ -263,9 +321,23 @@ input, select, textarea { outline: none; }
 .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px 14px; }
 .form-row { display: flex; flex-direction: column; gap: 5px; }
 .form-row.full { grid-column: 1 / -1; }
-.form-label { font-size: 12px; color: var(--text-2); display: flex; align-items: center; gap: 4px; }
+.form-label { font-size: var(--fs-sm); color: var(--text-2); display: flex; align-items: center; gap: var(--sp-1); }
 .form-label .req { color: var(--red); }
-.form-hint { font-size: 11px; color: var(--text-3); }
+.form-hint { font-size: var(--fs-xs); color: var(--text-3); }
+
+/* 字段说明的「?」小圆点（方案 E）
+   原来每个字段底下都压一行灰字，7 个字段就是 7 行，弹窗显得又长又啰嗦。
+   收进问号里：桌面悬停看 title，手机点一下展开（手机没有 hover，只做 title 等于没有）。
+   ⚠️ 只在物品编辑器里开启（C.form 的 compactHints）—— 别的表单字段少，留着灰字更直接。 */
+.form-help {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 15px; height: 15px; flex: 0 0 15px;
+  border-radius: 50%; border: 1px solid var(--border-strong);
+  color: var(--text-3); font-size: 10px; line-height: 1;
+  cursor: pointer; user-select: none;
+}
+.form-help:hover { color: var(--accent); border-color: var(--accent); }
+.form-help.on { color: #fff; background: var(--accent); border-color: var(--accent); }
 .form-divider { height: 1px; background: var(--border); margin: 16px 0 4px; }
 .form-inline { display: flex; gap: 8px; align-items: center; }
 
@@ -518,3 +590,54 @@ input, select, textarea { outline: none; }
   display: inline-block; margin-left: 6px; padding: 1px 7px; border-radius: 9px;
   background: var(--accent-soft); color: var(--accent); font-size: 11px; font-weight: 400;
 }
+
+/* ---------------- 分类管理（设置 → 管理分类） ----------------
+   增删改全部在同一个弹窗里就地完成：新建/改名是内联输入行，删除是行内二次确认。
+   之所以不各自再弹一个框，是因为 C.form / C.confirm 共用同一个 #modalBox，
+   嵌套打开会把当前这个弹窗整个顶掉。 */
+.cat-group { margin-bottom: 16px; }
+.cat-group:last-child { margin-bottom: 0; }
+.cat-group-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  padding-bottom: 6px; border-bottom: 1px solid var(--border);
+}
+.cat-group-name { font-size: 13px; font-weight: 600; color: var(--text-2); }
+.cat-row {
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 2px; border-bottom: 1px solid var(--border);
+}
+.cat-row:last-child { border-bottom: none; }
+.cat-dot { width: 14px; height: 14px; border-radius: 4px; flex: 0 0 auto; }
+.cat-name { flex: 1; min-width: 0; font-size: 13px; }
+.cat-count { font-size: 11px; color: var(--text-3); flex: 0 0 auto; }
+.cat-row-danger .cat-name { color: var(--text-2); }
+.cat-edit { padding: 8px 2px 10px; border-bottom: 1px solid var(--border); }
+.cat-swatches { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+.cat-sw {
+  width: 22px; height: 22px; padding: 0; border-radius: 6px;
+  border: 2px solid transparent; cursor: pointer;
+}
+.cat-sw.active { border-color: var(--text); }
+
+/* ---------------- 批量整理（物品清单的多选归位） ---------------- */
+.item-row.picking { cursor: pointer; }
+.item-row.picked { background: var(--accent-soft); }
+.pick-box {
+  width: 20px; height: 20px; flex: 0 0 auto;
+  display: flex; align-items: center; justify-content: center;
+  border: 1.5px solid var(--border-strong); border-radius: 5px;
+  font-size: 13px; line-height: 1; color: transparent;
+}
+.item-row.picked .pick-box {
+  border-color: var(--accent); background: var(--accent); color: #fff;
+}
+/* 操作条吸在列表底部：挑东西时往往已经滚到一半，按钮要一直在眼前 */
+.pick-bar {
+  position: sticky; bottom: 8px; z-index: 5;
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 10px; flex-wrap: wrap;
+  margin-top: 12px; padding: 10px 12px;
+  background: var(--panel); border: 1px solid var(--border);
+  border-radius: var(--radius); box-shadow: 0 6px 18px rgba(0, 0, 0, 0.12);
+}
+.pick-bar #pickCount { font-size: 13px; font-weight: 600; }

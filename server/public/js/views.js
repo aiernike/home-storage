@@ -195,6 +195,9 @@ Views.items = async function (el, state) {
             .map(([v, l]) => `<option value="${v}" ${(f.sort || 'updated_desc') === v ? 'selected' : ''}>${l}</option>`)
             .join('')}
         </select>
+        <button class="btn btn-sm" id="btnPickMode"${state.pickMode ? ' disabled' : ''}>${
+          state.pickMode ? '整理中…' : '批量整理'
+        }</button>
         <button class="btn btn-primary btn-sm" data-act="add-item">＋ 新增</button>
       </div>
     </div>
@@ -204,9 +207,14 @@ Views.items = async function (el, state) {
     ${Views._filterPanel(
       state,
       Views._activeFilterCount(f),
-      `<div class="chip-group" style="margin-bottom:9px" id="kindChips">${kindChips}</div>
-       <div class="chip-group" style="margin-bottom:9px" id="catChips">${catChips}</div>
-       <div class="chip-group" id="expChips">${expChips}</div>`
+      // 每行前面钉一个维度小标题（方案 D）。标签是 chip 容器的**兄弟节点**，
+      // 不能塞进 #kindChips 里面 —— 测试靠容器里的 .chip 数量判断筛选条渲染全没全。
+      `<div class="chip-row"><span class="chip-dim">类型</span>
+         <div class="chip-group" id="kindChips">${kindChips}</div></div>
+       <div class="chip-row"><span class="chip-dim">分类</span>
+         <div class="chip-group" id="catChips">${catChips}</div></div>
+       <div class="chip-row"><span class="chip-dim">保质期</span>
+         <div class="chip-group" id="expChips">${expChips}</div></div>`
     )}
 
     <div class="panel">
@@ -215,9 +223,28 @@ Views.items = async function (el, state) {
           ? `<div class="item-list">${items.map((i) => App.itemRowHtml(i)).join('')}</div>`
           : C.empty('▤', '还没有物品', '点击「新增」或到扫码页录入第一件物品')}
       </div>
-    </div>`;
+    </div>
+
+    ${
+      state.pickMode
+        ? `<div class="pick-bar" id="pickBar">
+      <span id="pickCount">已选 ${(state.picked || []).length} 件</span>
+      <div class="toolbar" style="margin:0">
+        <button class="btn btn-sm" id="pickCancel">取消</button>
+        <button class="btn btn-primary btn-sm" id="pickMove"${
+          (state.picked || []).length ? '' : ' disabled'
+        }>移动到…</button>
+      </div>
+    </div>`
+        : ''
+    }`;
 
   const refresh = () => App.goto('items', { keepFilters: true });
+  el.querySelector('#btnPickMode').onclick = () => App.startPick();
+  const pickMoveBtn = el.querySelector('#pickMove');
+  if (pickMoveBtn) pickMoveBtn.onclick = () => App.batchMove();
+  const pickCancelBtn = el.querySelector('#pickCancel');
+  if (pickCancelBtn) pickCancelBtn.onclick = () => App.cancelPick();
   el.querySelector('#fltLoc').onchange = (e) => {
     state.filters = Object.assign({}, state.filters, { location_id: e.target.value || null });
     refresh();
@@ -380,8 +407,10 @@ Views._kindPage = async function (el, state, kind) {
     ${Views._filterPanel(
       state,
       Views._activeFilterCount(f),
-      `<div class="chip-group" style="margin-bottom:9px" id="catChips">${catChips}</div>
-       <div class="chip-group" id="facetChips">${facetChips}</div>`
+      `<div class="chip-row"><span class="chip-dim">分类</span>
+         <div class="chip-group" id="catChips">${catChips}</div></div>
+       <div class="chip-row"><span class="chip-dim">${kind === 'doc' ? '年度' : '状态'}</span>
+         <div class="chip-group" id="facetChips">${facetChips}</div></div>`
     )}
 
     <div class="panel">
@@ -957,13 +986,6 @@ Views.locations = async function (el, state) {
       </div>
     </div>`;
 
-  const locOptions = (excludeId) =>
-    [{ value: '', label: '（作为顶层位置）' }].concat(
-      flat
-        .filter((l) => l.id !== excludeId)
-        .map((l) => ({ value: l.id, label: `${'　'.repeat(l.depth)}${l.path}` }))
-    );
-
   el.querySelector('[data-act="add-loc"]').onclick = () => App.openLocEditor(null);
   el.querySelector('#treeEditor').onclick = async (e) => {
     const edit = e.target.closest('[data-edit]');
@@ -1079,6 +1101,19 @@ Views.settings = async function (el) {
     <div class="page-head">
       <div><div class="page-title">设置</div>
       <div class="page-sub">数据、同步与备份</div></div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-head"><div class="panel-title">分类管理</div></div>
+      <div class="panel-body">
+        <div class="toolbar">
+          <button class="btn btn-sm" id="btnManageCats">管理分类</button>
+        </div>
+        <div class="form-hint" style="margin-top:10px">
+          新增、改名、换颜色或删除分类。删除分类后，原本归在它下面的记录会变成「未分类」，
+          记录本身不会被删掉。
+        </div>
+      </div>
     </div>
 
     <div class="panel">
@@ -1198,6 +1233,12 @@ Views.settings = async function (el) {
         </div>
       </div>
     </div>`;
+
+  el.querySelector('#btnManageCats').onclick = async () => {
+    // 改过分类才刷新：弹窗里的改动会影响筛选条的分类 chip 和列表里的分类名
+    const changed = await App.manageCategories();
+    if (changed) App.refreshAll();
+  };
 
   el.querySelector('#btnSaveWarn').onclick = async () => {
     const v = Number(el.querySelector('#setWarnDays').value) || 7;

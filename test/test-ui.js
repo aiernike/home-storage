@@ -517,6 +517,38 @@ const ok = (n, c, e) => {
   dsBox().querySelector('[data-act="cancel"]').click();
   await dsTick(30);
 
+  /* ---- 物品编辑器真的能提交 ----
+     ⚠️ 这条是回归：onSubmit 读的 chosenIcon 原来用 let 声明在 onMount 回调里，
+     跨作用域 → ReferenceError → 被 C.form 吞成一行灰字「chosenIcon is not defined」，
+     用户看到的就是「点添加没反应」。以前的测试只验了表单能打开、日期联动对不对，
+     从来没点过提交按钮，所以这个洞一直没被发现。 */
+  console.log('\n[UI-2e] 物品编辑器提交（跨作用域回归）');
+  window.App.openItemEditor(null, { kind: 'goods' });
+  await dsTick(60);
+  const subName = dsBox().querySelector('input[data-k="name"]');
+  ok('新增表单里有名称输入框', !!subName);
+  const subOk = dsBox().querySelector('[data-act="ok"]');
+  ok('新增表单的「添加」按钮有提交动作', !!subOk);
+  subName.value = '提交回归测试物品';
+  subName.dispatchEvent(new window.Event('input'));
+  // 带一个独立条码：不填条码会触发 items.nextCode 自动占掉 HS-2026-0001，
+  // 把后面 [UI-17] 要用的编码抢走。
+  const subBc = dsBox().querySelector('input[data-k="barcodes"]');
+  subBc.value = '9990000000009';
+  subBc.dispatchEvent(new window.Event('input'));
+  subOk.click();
+  await dsTick(300);
+  const saved = await store.handle('items.list', { keyword: '提交回归测试物品' });
+  ok('点「添加」真的把物品存进去了', saved.length === 1 && saved[0].name === '提交回归测试物品',
+    '命中 ' + saved.length + ' 条');
+  const leftBox = dsBox();
+  const leftInput = leftBox ? leftBox.querySelector('input[data-k="name"]') : null;
+  ok('提交成功后表单自动关闭', !leftInput,
+    'html=' + (leftBox ? leftBox.innerHTML.length : -1) +
+    ' err=' + (leftBox && leftBox.querySelector('#formErr') ? leftBox.querySelector('#formErr').textContent : 'none'));
+  // 清掉这条测试数据，避免影响后面用例的物品计数
+  if (saved.length === 1) await store.handle('items.delete', { id: saved[0].id });
+
   window.App.openItemEditor(null, { kind: 'doc' });
   await dsTick(60);
   const docKeep = dsBox().querySelector('input[data-k="x_keep_until"]');
@@ -2025,6 +2057,385 @@ const ok = (n, c, e) => {
   window.document.getElementById('modalRoot').hidden = true;
   window.App.state.view = 'items';
   await window.App.goto('items');
+
+  const tick = (ms) => new Promise((r) => setTimeout(r, ms || 50));
+
+  // ============================================================
+  // [UI-21] 分类管理弹窗：新增 / 改名 / 换色 / 删除
+  // ============================================================
+  console.log('\n[UI-21] 分类管理弹窗');
+  await window.App.goto('settings');
+  const setEl = window.document.getElementById('view-settings');
+  ok('设置页有「管理分类」入口', !!setEl.querySelector('#btnManageCats'));
+
+  setEl.querySelector('#btnManageCats').click();
+  await tick(80);
+  const catMgr = window.document.getElementById('catMgr');
+  ok('分类管理弹窗打开了', !!catMgr);
+  if (catMgr) {
+    const groups = catMgr.querySelectorAll('.cat-group');
+    ok('分类按三个栏目分组', groups.length === 3, '实际 ' + groups.length);
+    // 分组标题必须是物品 / 办公资料 / 图书，顺序与 U.CAT_KIND 的栏目一致
+    const heads = Array.from(groups).map((g) => g.querySelector('.cat-group-name').textContent);
+    ok('分组标题是「物品 / 办公资料 / 图书」',
+      heads.length === 3 && /物品/.test(heads[0]) && /办公资料/.test(heads[1]) && /图书/.test(heads[2]),
+      heads.join(' | '));
+
+    // ---- 新建：在「办公资料」组里建一个 ----
+    const docGroup = groups[1];
+    docGroup.querySelector('[data-new]').click();
+    await tick();
+    const nameInput = catMgr.querySelector('#catNameInput');
+    ok('点「＋ 新增」出现名称输入框', !!nameInput);
+
+    nameInput.value = '  测试新分类  ';
+    // 先挑颜色再保存：重绘会把输入框整个换掉，实现里必须先把名字收下来，
+    // 否则「填好名字再挑颜色」这一步会把名字吃掉（这条断言就是盯这个的）
+    catMgr.querySelector('.cat-sw[data-color="#1D9E75"]').click();
+    await tick();
+    const afterColor = catMgr.querySelector('#catNameInput');
+    ok('挑颜色不会吃掉已经敲进去的名称',
+      !!afterColor && afterColor.value === '  测试新分类  ', afterColor && '"' + afterColor.value + '"');
+
+    catMgr.querySelector('[data-save]').click();
+    await tick(80);
+    const catsNow = await store.handle('categories.list');
+    const created = catsNow.find((c) => c.name === '测试新分类');
+    ok('新建的分类存进去了（名字首尾空格被去掉）', !!created, JSON.stringify(catsNow.map((c) => c.name).slice(-3)));
+    ok('新分类的 key 带上了栏目前缀（否则在资料页找不到它）',
+      !!created && /^doc:/.test(created.key || ''), created && JSON.stringify(created.key));
+    ok('新分类出现在「办公资料」组里',
+      !!catMgr.querySelector('[data-edit="' + (created && created.id) + '"]'), '');
+
+    // 给它挂一条记录：删除确认里必须说清「N 条会变成未分类」。
+    // 只说「确定删除？」的话，用户根本不知道这一下会牵连到什么。
+    await store.handle('items.save', { name: '临时挂靠物品', category_id: created.id });
+
+    // ---- 改名 ----
+    catMgr.querySelector('[data-edit="' + created.id + '"]').click();
+    await tick();
+    const editInput = catMgr.querySelector('#catNameInput');
+    ok('点编辑打开的是带原名的输入框',
+      !!editInput && editInput.value === '测试新分类', editInput && '"' + editInput.value + '"');
+    editInput.value = '改名后的分类';
+    catMgr.querySelector('[data-save]').click();
+    await tick(80);
+    ok('改名生效',
+      (await store.handle('categories.list')).some((c) => c.id === created.id && c.name === '改名后的分类'),
+      '');
+
+    // ---- 删除：必须先二次确认，不能点一下就没 ----
+    catMgr.querySelector('[data-del="' + created.id + '"]').click();
+    await tick();
+    ok('点删除只是进入确认态（分类还在）',
+      (await store.handle('categories.list')).some((c) => c.id === created.id), '');
+    ok('确认条上说清了会有几条记录变成未分类',
+      /该分类下有 1 条记录，会变成「未分类」/.test(catMgr.textContent || ''),
+      (catMgr.textContent || '').slice(0, 60));
+    catMgr.querySelector('[data-delok="' + created.id + '"]').click();
+    await tick(80);
+    ok('确认后分类才真的删掉',
+      !(await store.handle('categories.list')).some((c) => c.id === created.id), '');
+
+    window.document.querySelector('#modalBox [data-act="done"]').click();
+    await tick();
+    ok('弹窗关掉了', window.document.getElementById('modalRoot').hidden === true);
+  }
+
+  // ---- 返回值：改过数据就得告诉调用方，否则设置页不会刷新 ----
+  // 这里直接调接口拿 Promise（按钮的 onclick 是 async 函数，点它拿不到返回值）。
+  const noChange = window.App.manageCategories();
+  await tick(80);
+  window.document.querySelector('#modalBox [data-act="done"]').click();
+  ok('什么都没改时返回 false（不触发多余的刷新）', (await noChange) === false);
+
+  const didChange = window.App.manageCategories();
+  await tick(80);
+  const mgr2 = window.document.getElementById('catMgr');
+  mgr2.querySelector('[data-new="book"]').click();
+  await tick();
+  mgr2.querySelector('#catNameInput').value = '绘本测试';
+  mgr2.querySelector('[data-save]').click();
+  await tick(80);
+  window.document.querySelector('#modalBox [data-act="done"]').click();
+  ok('改过分类后返回 true（调用方据此刷新页面）', (await didChange) === true);
+  // 清掉刚建的测试分类，别影响后面的用例
+  const leftover = (await store.handle('categories.list')).find((c) => c.name === '绘本测试');
+  if (leftover) await store.handle('categories.delete', { id: leftover.id });
+
+  // ============================================================
+  // [UI-22] 批量整理：勾几件 → 一次归位
+  // ============================================================
+  console.log('\n[UI-22] 批量整理（多选归位）');
+  await window.App.goto('items');
+  const iEl = window.document.getElementById('view-items');
+  const rowsBefore = iEl.querySelectorAll('.item-row').length;
+  ok('物品清单工具栏有「批量整理」', !!iEl.querySelector('#btnPickMode'));
+  ok('平时列表里没有勾选框', iEl.querySelectorAll('.pick-box').length === 0);
+
+  iEl.querySelector('#btnPickMode').click();
+  await tick(80);
+  ok('进入选择模式后每行都出现了勾选框',
+    iEl.querySelectorAll('.pick-box').length === rowsBefore, '行数 ' + rowsBefore);
+  ok('底部出现了操作条', !!iEl.querySelector('#pickBar'));
+  const moveBtn = iEl.querySelector('#pickMove');
+  ok('一件都没选时「移动到…」是禁用的', !!moveBtn && moveBtn.disabled === true);
+
+  const rows = iEl.querySelectorAll('.item-row');
+  rows[0].click();
+  rows[1].click();
+  ok('点行就是勾选', iEl.querySelectorAll('.item-row.picked').length === 2,
+    '实际 ' + iEl.querySelectorAll('.item-row.picked').length);
+  ok('操作条上显示已选件数', /已选 2 件/.test(iEl.querySelector('#pickCount').textContent),
+    iEl.querySelector('#pickCount').textContent);
+  ok('勾了之后按钮可以点了', moveBtn.disabled === false);
+  ok('选择模式下点行不会弹出编辑器', window.document.getElementById('modalRoot').hidden === true);
+
+  rows[1].click();
+  ok('再点一次取消勾选', iEl.querySelectorAll('.item-row.picked').length === 1);
+  rows[1].click(); // 勾回来
+
+  const pickedIds = Array.from(iEl.querySelectorAll('.item-row.picked')).map((r) => r.dataset.item);
+  const target = kitchen.children.find((n) => n.name === '橱柜').children[0];
+
+  const movePromise = window.App.batchMove();
+  await tick(80);
+  const locSel = window.document.querySelector('#modalBox select[data-k="location_id"]');
+  ok('弹出目标位置选择', !!locSel);
+  if (locSel) {
+    locSel.value = target.id;
+    window.document.querySelector('#modalBox [data-act="ok"]').click();
+    await movePromise;
+    await tick(80);
+    const movedNow = await Promise.all(pickedIds.map((id) => store.handle('items.get', { id })));
+    ok('勾选的那几件真的都挪到了目标位置',
+      movedNow.every((it) => it.location_id === target.id),
+      movedNow.map((it) => it.location_id).join(','));
+    ok('移动完自动退出选择模式', !window.App.state.pickMode);
+    await window.App.goto('items');
+    ok('回到列表后勾选框没了（不是一直挂在那儿）',
+      window.document.getElementById('view-items').querySelectorAll('.pick-box').length === 0);
+  }
+
+  // ============================================================
+  // [UI-23] 物品行信息分层（方案 C）
+  // ============================================================
+  console.log('\n[UI-23] 物品行信息分层');
+  const cssSrc = fs.readFileSync(path.join(ROOT, 'src', 'renderer', 'css', 'style.css'), 'utf8');
+  const mobCssSrc = fs.readFileSync(path.join(ROOT, 'mobile', 'platform', '02-mobile.css'), 'utf8');
+  // jsdom 不解析 CSS（没开 resources），所以样式类断言一律读 CSS 源码文本
+  const cssRule = (src, sel) => {
+    const i = src.indexOf(sel + ' {');
+    return i < 0 ? '' : src.slice(i + sel.length, src.indexOf('}', i));
+  };
+  /**
+   * 断言「CSS 里**没有**某条规则」时必须先剥掉注释。
+   * 真踩过：那条被删掉的规则我顺手写进了注释里解释「为什么删」，
+   * 于是「没有这条规则」的断言被自己的注释命中，红得莫名其妙。
+   */
+  const stripCss = (s) => s.replace(/\/\*[\s\S]*?\*\//g, '');
+
+  await window.App.goto('items');
+  const rowByName = (view, name) =>
+    [...window.document.querySelectorAll('#view-' + view + ' .item-row')]
+      .find((r) => r.textContent.includes(name));
+
+  const soyRow = rowByName('items', '海天酱油');
+  ok('物品行渲染出来了', !!soyRow);
+  if (soyRow) {
+    const m = soyRow.querySelector('.item-meta');
+    ok('第二行分成三层（位置 / 字段 / 标签），不是一串平铺的 span',
+      !!m && !!m.querySelector('.item-meta-loc'), m ? m.innerHTML.slice(0, 80) : '没有 .item-meta');
+    ok('第一层就是位置（收纳软件里「放在哪」是第一信息）',
+      m.firstElementChild.classList.contains('item-meta-loc') && m.firstElementChild.textContent.includes('冷藏室'),
+      m.firstElementChild.textContent);
+    ok('位置的颜色比其余字段深一档（--text-2 vs --text-3）',
+      /color:\s*var\(--text-2\)/.test(cssRule(cssSrc, '.item-meta-loc')) &&
+      /color:\s*var\(--text-3\)/.test(cssRule(cssSrc, '.item-meta')),
+      cssRule(cssSrc, '.item-meta-loc'));
+    ok('中间字段只有「一段」（不是一个字段一个 span，那样又散开了）',
+      m.querySelectorAll('.item-meta-fields').length === 1,
+      String(m.querySelectorAll('.item-meta-fields').length));
+    ok('中间字段带 title（桌面悬停能看全）',
+      (m.querySelector('.item-meta-fields').title || '').length > 0);
+    const gTag = m.querySelector('.tag.tag-barcode');
+    ok('普通物品的条码做成了标签，不混在文字流里',
+      !!gTag && gTag.textContent === '6901234567892', gTag && gTag.textContent);
+    ok('标签排在最后（截断的永远是中间那段文字，标签永远看得见）',
+      m.lastElementChild.classList.contains('tag'), m.lastElementChild.className);
+  }
+
+  // 「字段太多时截断」这件事必须交给 CSS 做，不能在 JS 里砍。
+  // 在 JS 里砍会把「金额」这类产品自己在卡片里强调的字段从行里抹掉（资料页有卡片专门显示它）。
+  await store.handle('items.save', {
+    name: '信息分层样本', kind: 'doc', category_id: catOf('合同').id,
+    extra: { doc_no: 'DC-001', year: '2024', org: '某单位', amount: '100', keep_until: '2030-01-01' }
+  });
+  await window.App.goto('docs');
+  const sampleRow = rowByName("docs", "信息分层样本");
+  ok('多字段的资料行渲染出来了', !!sampleRow);
+  if (sampleRow) {
+    const sm = sampleRow.querySelector('.item-meta');
+    const all = ['DC-001', '2024 年度', '某单位', '100', '保管至 2030-01-01'];
+    const lost = all.filter((t) => !sm.textContent.includes(t));
+    ok('字段一个都没被 JS 丢掉（截断交给 CSS，点进详情还能看全）',
+      lost.length === 0, '丢了：' + lost.join('、'));
+    ok('多个字段用「·」连成一段（不再靠 12px 空隙硬撑）',
+      / · /.test(sm.querySelector('.item-meta-fields').textContent),
+      sm.querySelector('.item-meta-fields').textContent);
+    ok('截断由 CSS 负责：整行不换行 + 溢出隐藏，中间那段用省略号',
+      /\.item-meta\s*\{[^}]*overflow:\s*hidden/.test(cssSrc) &&
+      /\.item-meta-fields\s*\{[^}]*text-overflow:\s*ellipsis/.test(cssSrc));
+  }
+
+  await window.App.goto('books');
+  const bookRow2 = rowByName("books", "深入理解计算机系统");
+  ok('图书行渲染出来了', !!bookRow2);
+  if (bookRow2) {
+    const bm = bookRow2.querySelector('.item-meta');
+    const isbnTag = bm.querySelector('.tag-barcode');
+    ok('ISBN 做成标签且带 ISBN 前缀',
+      !!isbnTag && isbnTag.textContent === 'ISBN 9787111544937', isbnTag && isbnTag.textContent);
+    const stTag = bm.querySelector('.tag-plain');
+    ok('阅读状态做成标签（借出 / 在读 这类是「状态」，不是描述性字段）',
+      !!stTag && stTag.textContent === '在读', stTag && stTag.textContent);
+  }
+
+  // 手机端：宽泛选择器会把标签一起拍成 inline，胶囊底色就没了（桌面有、手机没有）
+  ok('手机端 CSS 里没有 .item-meta span 这种宽泛选择器',
+    !/\.item-meta\s+span\s*\{/.test(stripCss(mobCssSrc)));
+  ok('手机端给条形码标签留了宽度上限（13 位数字不能把整行吃光）',
+    /\.item-meta\s+\.tag-barcode\s*\{[^}]*max-width/.test(mobCssSrc));
+
+  // ============================================================
+  // [UI-24] 筛选区维度标签（方案 D）
+  // ============================================================
+  console.log('\n[UI-24] 筛选区维度标签');
+  const dimsOf = (view) =>
+    [...window.document.querySelectorAll('#view-' + view + ' .chip-row .chip-dim')].map((e) => e.textContent);
+
+  await window.App.goto('items');
+  const itemsEl2 = window.document.getElementById('view-items');
+  ok('物品页三行筛选各有一个维度标签',
+    JSON.stringify(dimsOf('items')) === JSON.stringify(['类型', '分类', '保质期']),
+    dimsOf('items').join(' | '));
+  const kindGroup = itemsEl2.querySelector('#kindChips');
+  ok('标签是 chip 容器的兄弟节点，没塞进容器里',
+    !!kindGroup && !!kindGroup.parentElement &&
+    kindGroup.parentElement.classList.contains('chip-row') &&
+    !!kindGroup.parentElement.querySelector('.chip-dim'));
+  // 上面那条挡不住「塞进容器内部」：`.chip-row .chip-dim` 对容器内外都成立。
+  // 容器里必须**只有 pill**，否则「这行渲染全了没有」的判断会被一个标签带偏。
+  ok('chip 容器里只有 pill，没有混进标签',
+    !kindGroup.querySelector('.chip-dim') &&
+    [...kindGroup.children].every((c) => c.classList.contains('chip')),
+    [...kindGroup.children].map((c) => c.className).join(' | '));
+  ok('标签不是 .chip（否则会被当成一个筛选按钮，数量也对不上）',
+    !itemsEl2.querySelector('.chip-dim').classList.contains('chip'));
+  ok('标签排在对应那行 pill 前面',
+    kindGroup.parentElement.firstElementChild.classList.contains('chip-dim'));
+  ok('每行 pill 数量没被标签污染',
+    itemsEl2.querySelectorAll('#kindChips .chip').length === 4 &&
+    itemsEl2.querySelectorAll('#expChips .chip').length === 5,
+    itemsEl2.querySelectorAll('#kindChips .chip').length + ' / ' +
+    itemsEl2.querySelectorAll('#expChips .chip').length);
+
+  await window.App.goto('docs');
+  ok('资料页标签是「分类 / 年度」',
+    JSON.stringify(dimsOf('docs')) === JSON.stringify(['分类', '年度']), dimsOf('docs').join(' | '));
+  await window.App.goto('books');
+  ok('图书页标签是「分类 / 状态」',
+    JSON.stringify(dimsOf('books')) === JSON.stringify(['分类', '状态']), dimsOf('books').join(' | '));
+
+  // ============================================================
+  // [UI-25] 新增物品弹窗：字段重排 + 说明收进「?」（方案 E）
+  // ============================================================
+  console.log('\n[UI-25] 新增物品弹窗：字段重排 + 说明收进「?」');
+  window.App.openItemEditor(null, { kind: 'goods' });
+  await tick(80);
+  const edBox = window.document.getElementById('modalBox');
+  // 按「行」而不是按 [data-k] 取顺序：图标字段是 type:'static'，根本没有 data-k，
+  // 只取 [data-k] 会把它漏掉，于是「图标排最后」这条断言会拿 -1 去比，永远红。
+  // 隐藏的「新建分类」行要排掉 —— 它没有 data-k，会污染顺序。
+  const rowKeys = [...edBox.querySelectorAll('.form-grid > .form-row')]
+    .filter((r) => !r.hidden)
+    .map((r) => {
+      const c = r.querySelector('[data-k]');
+      if (c) return c.dataset.k;
+      if (r.querySelector('#iconField')) return 'icon';
+      if (r.querySelector('#imgPreview')) return 'img';
+      return '?';
+    });
+  const at = (k) => rowKeys.indexOf(k);
+  ok('弹窗里的字段行都认出来了（没有无法识别的行）', rowKeys.indexOf('?') < 0, rowKeys.join(','));
+  ok('名称排第一（必填项不该让人往下找）', at('name') === 0, rowKeys.join(','));
+  ok('分类和数量挨着（并排一行）', at('quantity') === at('category_id') + 1, rowKeys.join(','));
+  ok('位置紧跟在分类/数量之后（这三个是录东西时最常动的）',
+    at('location_id') > at('quantity') && at('location_id') < at('barcodes'), rowKeys.join(','));
+  ok('条码 / 内部编码排在位置之后', at('barcodes') > at('location_id') && at('code') > at('barcodes'),
+    rowKeys.join(','));
+  ok('保质期三个字段排在标签/备注之前',
+    at('production_date') < at('tags') && at('shelf_life_days') < at('tags') && at('expiry_date') < at('tags'),
+    rowKeys.join(','));
+  ok('备注在图片/图标之前', at('note') < at('img') && at('note') < at('icon'), rowKeys.join(','));
+  ok('图标排到最后（最低频、又占一整行）', at('icon') === rowKeys.length - 1, rowKeys.join(','));
+  ok('图片紧挨在图标上面（照片比图标常用一档）', at('img') === at('icon') - 1, rowKeys.join(','));
+  ok('到期日期独占一行（它常常是算出来的结果）',
+    edBox.querySelector('[data-k="expiry_date"]').closest('.form-row').classList.contains('full'));
+
+  const helps = [...edBox.querySelectorAll('.form-help')];
+  ok('字段说明做成了「?」（7 行灰字把弹窗撑太长了）', helps.length >= 4, '实际 ' + helps.length);
+  const codeHintEl = edBox.querySelector('[data-hint-for="code"]');
+  ok('说明默认是收起的', !!codeHintEl && codeHintEl.hidden === true);
+  ok('「?」的 title 里就是说明原文（桌面悬停能看）',
+    helps.length > 0 && helps.every((h) => (h.title || '').length > 4),
+    helps.map((h) => h.title).join(' | ').slice(0, 60));
+
+  // 断言写全了再点：万一「?」没渲染出来，这里要「红」而不是「崩」
+  // （崩了的话后面的断言一条都不会跑，反而看不出问题在哪）
+  const codeHelp = edBox.querySelector('[data-help-for="code"]');
+  ok('「?」是可以点的（不是个纯装饰）', !!codeHelp);
+  if (codeHelp) {
+    codeHelp.click();
+    await tick(10);
+    ok('点「?」把说明展开（手机上没 hover，只给 title 等于没有）',
+      edBox.querySelector('[data-hint-for="code"]').hidden === false);
+    ok('展开后「?」有激活态', codeHelp.classList.contains('on'));
+    codeHelp.click();
+    await tick(10);
+    ok('再点一次收起', edBox.querySelector('[data-hint-for="code"]').hidden === true);
+  }
+  ok('收起的只有说明，字段本身一个没少', rowKeys.length === 15,
+    '实际 ' + rowKeys.length + ' 行：' + rowKeys.join(','));
+  edBox.querySelector('[data-act="cancel"]').click();
+  await tick(60);
+
+  // 改动只该影响物品编辑器 —— 别的表单字段少，灰字摊开更直接
+  const plainP = window.C.form({ title: '对照', fields: [{ key: 'a', label: 'A', hint: '这是说明' }] });
+  await tick(40);
+  const plainBox = window.document.getElementById('modalBox');
+  ok('没开 compactHints 的表单，说明照旧摊开',
+    plainBox.querySelector('[data-hint-for="a"]').hidden === false &&
+    plainBox.querySelectorAll('.form-help').length === 0);
+  plainBox.querySelector('[data-act="cancel"]').click();
+  await plainP;
+  await tick(30);
+
+  // ============================================================
+  // [UI-26] 设计令牌（方案 F）
+  // ============================================================
+  console.log('\n[UI-26] 设计令牌');
+  const rootCss = cssSrc.slice(0, cssSrc.indexOf('}'));
+  const NEED_TOK = ['--fs-xs', '--fs-sm', '--fs-md', '--fs-lg', '--fs-xl', '--fs-2xl',
+    '--sp-1', '--sp-2', '--sp-3', '--sp-4', '--sp-5'];
+  const missingTok = NEED_TOK.filter((k) => !new RegExp(k + '\\s*:').test(rootCss));
+  ok(':root 里 11 个设计令牌齐全', missingTok.length === 0, '缺：' + missingTok.join('、'));
+  ok('物品行第二行用的是字号令牌，不是又一个硬编码 11px',
+    /\.item-meta\s*\{[^}]*font-size:\s*var\(--fs-xs\)/.test(cssSrc));
+  ok('筛选 pill 用的是字号令牌',
+    /\.chip\s*\{[^}]*font-size:\s*var\(--fs-sm\)/.test(cssSrc));
+  ok('手机端也用同一套令牌（两端不会各写一个数）',
+    /\.chip\s*\{[^}]*font-size:\s*var\(--fs-md\)/.test(mobCssSrc));
 
   console.log('\n========================================');
   console.log(`  渲染层通过 ${pass} 项，失败 ${fail} 项`);

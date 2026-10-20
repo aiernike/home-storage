@@ -839,6 +839,63 @@ app.whenReady().then(async () => {
     await win.webContents.executeJavaScript(`C.close()`);
     await new Promise((r) => setTimeout(r, 300));
 
+    // 物品行第二行（方案 C）：位置 · 字段 · 标签 三层，在真机尺寸下必须**只有一行**。
+    // 桌面版靠 flex + nowrap + 省略号保证，但 jsdom 不做布局，测不出来 ——
+    // 只能在真实 Chromium 里量高度。第二行一旦折成两三行，整个列表就没法扫了。
+    // 顺带验一件 jsdom 验不了的事：标签在手机上还是不是「胶囊」
+    // （曾经被 `.item-meta span { display:inline }` 拍成普通文字，桌面有底色、手机没有）。
+    await win.webContents.executeJavaScript(`(async () => {
+      try { C.close(); } catch (e) {}
+      const locs = (await window.api.call('locations.list')).data;
+      await window.api.call('items.save', {
+        name: '分层测量样本', barcodes: ['6901234567890'], code: 'HS-TEST-0001',
+        quantity: 1, unit: '瓶', expiry_date: '2030-01-01',
+        location_id: locs[0] ? locs[0].id : null,
+        note: '备注也算中间那段字段，看它会不会把整行撑成两行'
+      });
+      await App.goto('items');
+      await new Promise(r => setTimeout(r, 450));
+      return true;
+    })()`);
+    result.metaFit = await win.webContents.executeJavaScript(`(() => {
+      const row = [...document.querySelectorAll('#view-items .item-row')]
+        .find(r => r.textContent.includes('分层测量样本'));
+      if (!row) return { found: false };
+      const m = row.querySelector('.item-meta');
+      if (!m) return { found: false, reason: 'no .item-meta' };
+      const loc = m.querySelector('.item-meta-loc');
+      const fields = m.querySelector('.item-meta-fields');
+      const tag = m.querySelector('.tag');
+      const mRect = m.getBoundingClientRect();
+      // 用「位置那一行」的高度当一行文字的高度：line-height 可能是 normal，
+      // parseFloat 会得到 NaN，拿它算行数会永远「通过」（假绿）。
+      const locH = loc ? loc.getBoundingClientRect().height : 0;
+      const cs = tag ? getComputedStyle(tag) : null;
+      return {
+        found: true,
+        metaHeight: Math.round(mRect.height),
+        locHeight: Math.round(locH),
+        lines: locH > 0 ? Math.round(mRect.height / locH) : -1,
+        locFirst: m.firstElementChild === loc,
+        locDimmer: !!loc && getComputedStyle(loc).color !== getComputedStyle(m).color,
+        locColor: loc ? getComputedStyle(loc).color : '',
+        metaColor: getComputedStyle(m).color,
+        // 旧的那条「.item-meta span { margin-right: 10px }」会加在每一段上。
+        // 它的优先级比 .item-meta-loc / .item-meta-fields 高，会**静默**盖掉它们的 display，
+        // 所以「有没有被加回来」只能靠量真实外边距（display 测不出来：
+        // flex 子项会被 blockify，inline 和 inline-flex 算出来都可能是 block）。
+        locMargin: loc ? getComputedStyle(loc).marginRight : '',
+        fieldsMargin: fields ? getComputedStyle(fields).marginRight : '',
+        tagBg: cs ? cs.backgroundColor : '',
+        hasSeparator: /·/.test(fields ? fields.textContent : ''),
+        tagDisplay: cs ? cs.display : '',
+        tagRadius: cs ? cs.borderRadius : '',
+        tagW: tag ? Math.round(tag.getBoundingClientRect().width) : 0,
+        rowRight: Math.round(row.getBoundingClientRect().right),
+        viewW: document.documentElement.clientWidth
+      };
+    })()`);
+
     console.log('MUI_RESULT: ' + JSON.stringify(result));
   } catch (e) {
     console.log('MUI_ERROR: ' + String((e && e.message) || e));

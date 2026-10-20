@@ -271,6 +271,11 @@ const App = {
     if (view === 'search') view = 'items';
     const prev = App.state.view;
     App.state.view = view;
+    // 离开物品页就退出批量选择：回来时列表内容已经变了，留着勾选容易误操作
+    if (view !== 'items' && App.state.pickMode) {
+      App.state.pickMode = false;
+      App.state.picked = [];
+    }
     // 列表类页面（物品/办公资料/图书）切进来时清掉上一个页面的筛选，
     // 但保留位置筛选 —— 从位置树点进来的场景要延续。
     if (!opts.keepFilters && (view === 'items' || view === 'docs' || view === 'books') && prev !== view) {
@@ -350,7 +355,11 @@ const App = {
       : ico
         ? `<span class="item-ico" style="color:${U.esc(i.category_color || '#888780')}" title="${U.esc(i.category_name || U.kindLabel(i.kind))}">${ico}</span>`
         : `<span class="item-dot" style="background:${i.category_color || '#888780'}" title="${U.esc(i.category_name || '未分类')}"></span>`;
-    return `<div class="item-row" data-item="${i.id}">
+    // 批量选择模式下每行前面多一个勾选框（见 App.startPick）
+    const picking = !!App.state.pickMode;
+    const picked = picking && (App.state.picked || []).indexOf(i.id) >= 0;
+    return `<div class="item-row${picking ? ' picking' : ''}${picked ? ' picked' : ''}" data-item="${i.id}">
+      ${picking ? `<span class="pick-box">${picked ? '✓' : ''}</span>` : ''}
       ${lead}
       <div class="item-main">
         <div class="item-name"><span class="item-title">${U.esc(i.name)}</span>
@@ -372,37 +381,66 @@ const App = {
   },
 
   /**
-   * 列表第二行的信息。三类物品关心的东西不一样：
+   * 列表第二行的信息（方案 C · 信息分层）。三类物品关心的东西不一样：
    * 办公资料看编号/年度/金额/保管期限，图书看作者/出版社/ISBN，普通物品看条码/到期。
+   *
+   * 分三层，不再是一串同色同重的字段：
+   *   位置（--text-2，比其余深一档）→ 中间字段用「·」连成一段 → 状态/条码做成标签
    * 位置放最前面 —— 收纳软件里「放在哪」永远是第一信息。
+   *
+   * 返回的是**不换行**的一整段：装不下由 CSS 用省略号截断（见 .item-meta）。
+   * 截掉的内容没有丢：每个 span 的 title 里是全量，点进详情页也能看全。
    */
   itemMetaHtml(i) {
     const ex = i.extra || {};
-    const parts = ['◱ ' + (i.location_path || '未指定位置')];
+    const locText = '◱ ' + (i.location_path || '未指定位置');
+    const loc = `<span class="item-meta-loc" title="${U.esc(locText)}">${U.esc(locText)}</span>`;
+    const mid = [];      // 中间字段：纯文字，用「·」分隔
+    const tags = [];     // 状态 / 标识类：做成标签，不混在文字流里
     if (i.kind === 'doc') {
-      if (i.code) parts.push('编码 ' + i.code);
-      if (ex.doc_no) parts.push('文号 ' + ex.doc_no);
-      if (ex.year) parts.push(ex.year + ' 年度');
-      if (ex.org) parts.push(ex.org);
-      if (ex.amount) parts.push(U.fmtMoney(ex.amount) + ' 元');
-      if (ex.keep_until) parts.push('保管至 ' + U.fmtDate(ex.keep_until));
+      if (i.code) mid.push('编码 ' + i.code);
+      if (ex.doc_no) mid.push('文号 ' + ex.doc_no);
+      if (ex.year) mid.push(ex.year + ' 年度');
+      if (ex.org) mid.push(ex.org);
+      if (ex.amount) mid.push(U.fmtMoney(ex.amount) + ' 元');
+      if (ex.keep_until) mid.push('保管至 ' + U.fmtDate(ex.keep_until));
     } else if (i.kind === 'book') {
-      if (ex.author) parts.push(ex.author);
-      if (ex.publisher) parts.push(ex.publisher);
-      if (ex.pub_year) parts.push(ex.pub_year + ' 年');
+      if (ex.author) mid.push(ex.author);
+      if (ex.publisher) mid.push(ex.publisher);
+      if (ex.pub_year) mid.push(ex.pub_year + ' 年');
       // 杂志走的是 977 开头的期刊条码，别一律叫成 ISBN
-      if (i.barcode) parts.push((U.isIssnCode(i.barcode) ? 'ISSN ' : 'ISBN ') + i.barcode);
-      if (ex.status) parts.push(ex.status);
+      if (i.barcode) {
+        tags.push({
+          cls: 'tag-barcode',
+          text: (U.isIssnCode(i.barcode) ? 'ISSN ' : 'ISBN ') + i.barcode
+        });
+      }
+      // 借出 / 在读 / 已读：这是「状态」，和上面那些描述性字段不是一回事
+      if (ex.status) tags.push({ cls: 'tag-plain', text: ex.status });
     } else {
-      if (i.code) parts.push('编码 ' + i.code);
-      if (i.barcode) parts.push(i.barcode);
-      if (i.expiry_date) parts.push('到期 ' + U.fmtDate(i.expiry_date));
+      if (i.code) mid.push('编码 ' + i.code);
+      if (i.barcode) tags.push({ cls: 'tag-barcode', text: i.barcode });
+      if (i.expiry_date) mid.push('到期 ' + U.fmtDate(i.expiry_date));
     }
-    if (i.note) parts.push(String(i.note).slice(0, 24));
-    return parts.map((p) => `<span>${U.esc(p)}</span>`).join('');
+    if (i.note) mid.push(String(i.note).slice(0, 24));
+    const midHtml = mid.length
+      ? `<span class="item-meta-fields" title="${U.esc(mid.join(' · '))}">${U.esc(mid.join(' · '))}</span>`
+      : '';
+    const tagsHtml = tags
+      .map((t) => `<span class="tag ${t.cls}" title="${U.esc(t.text)}">${U.esc(t.text)}</span>`)
+      .join('');
+    return loc + midHtml + tagsHtml;
   },
 
   handleRowClick(e) {
+    // 批量选择模式下点整行 = 勾选/取消，而不是打开编辑器。
+    // 行内那些按钮（数量增减、编辑、删除）这时也一并当作勾选处理 ——
+    // 选择模式下它们都不可用，误点进编辑器反而会打断「挑东西」这个动作。
+    if (App.state.pickMode) {
+      const row = e.target.closest('[data-item]');
+      if (row) App.togglePick(row.dataset.item);
+      return;
+    }
     const thumb = e.target.closest('[data-thumb]');
     if (thumb) return App.viewImage(thumb.dataset.thumb);
     const minus = e.target.closest('[data-minus]');
@@ -419,6 +457,80 @@ const App = {
     if (edit) return App.openItemEditor(edit.dataset.edititem);
     if (del) return App.deleteItem(del.dataset.delitem);
     if (row) return App.openItemEditor(row.dataset.item);
+  },
+
+  // ---------------- 批量整理（一次把一堆东西归位） ----------------
+  /**
+   * 收纳时最典型的动作是「这一堆都该放进那个箱子」。一件件点开改位置太慢，
+   * 所以物品清单给一个多选模式，选完一次性归位（items.move 支持一次挪一批）。
+   */
+  startPick() {
+    App.state.pickMode = true;
+    App.state.picked = [];
+    App.goto(App.state.view, { keepFilters: true });
+  },
+
+  cancelPick() {
+    App.state.pickMode = false;
+    App.state.picked = [];
+    App.goto(App.state.view, { keepFilters: true });
+  },
+
+  togglePick(id) {
+    const list = App.state.picked || (App.state.picked = []);
+    const i = list.indexOf(id);
+    if (i >= 0) list.splice(i, 1);
+    else list.push(id);
+    // 只改勾选状态，不整页重绘 —— 重绘会把列表滚回顶部，
+    // 而「挑东西」时用户往往已经滚到一半了。
+    App._syncPickBar();
+  },
+
+  _syncPickBar() {
+    const picked = App.state.picked || [];
+    document.querySelectorAll('#view-items .item-row').forEach((row) => {
+      const on = picked.indexOf(row.dataset.item) >= 0;
+      row.classList.toggle('picked', on);
+      const box = row.querySelector('.pick-box');
+      if (box) box.textContent = on ? '✓' : '';
+    });
+    const cnt = document.getElementById('pickCount');
+    if (cnt) cnt.textContent = '已选 ' + picked.length + ' 件';
+    const btn = document.getElementById('pickMove');
+    if (btn) btn.disabled = picked.length === 0;
+  },
+
+  async batchMove() {
+    const ids = (App.state.picked || []).slice();
+    if (!ids.length) return C.toast('先勾选要移动的物品', 'warn');
+    const r = await window.api.call('locations.list');
+    const locs = r.data || [];
+    const vals = await C.form({
+      title: `把 ${ids.length} 件物品移到…`,
+      fields: [
+        {
+          key: 'location_id',
+          label: '目标位置',
+          type: 'select',
+          value: '',
+          full: true,
+          options: [{ value: '', label: '（移出位置，变成「未指定位置」）' }].concat(
+            locs.map((l) => ({ value: l.id, label: l.path }))
+          )
+        }
+      ],
+      okText: '移动',
+      onSubmit: async (v) => {
+        const mr = await window.api.call('items.move', { ids, location_id: v.location_id || null });
+        if (!mr.ok) throw new Error(mr.error);
+        return mr.data;
+      }
+    });
+    if (!vals) return; // 用户取消了
+    C.toast('已移动 ' + ids.length + ' 件物品', 'ok');
+    App.state.pickMode = false;
+    App.state.picked = [];
+    await App.refreshAll();
   },
 
   async consume(id, delta) {
@@ -531,6 +643,19 @@ const App = {
 
     const kind = U.KINDS[(item && item.kind) || preset.kind] ? ((item && item.kind) || preset.kind) : 'goods';
     const meta = U.KINDS[kind];
+
+    // 图标选择的结果要在 onMount（点按钮选图标）和 onSubmit（提交 payload.icon）
+    // 之间共享，所以必须声明在 openItemEditor 作用域。
+    // ⚠️ 声明在 onMount 里会让 onSubmit 抛 ReferenceError，被表单吞成一行
+    // 「chosenIcon is not defined」的灰字，用户看到的就是「点添加没反应」。
+    let chosenIcon = (item && item.icon) || '';
+
+    // 图片状态同理：onMount 里改、onSubmit 里读。
+    // ⚠️ 这三个原来也声明在 onMount 里，导致物品**已经存进库**之后 onSubmit 才抛
+    // 「pending is not defined」，表单不关、用户以为没成功又点一次 → 存出重复记录。
+    let pending = null;      // 新选/新拍的图 {full, thumb, w, h}
+    let removed = false;     // 是否点了「移除」
+    const existingImageId = item ? item.image_id || '' : '';
     // 只列出这个栏目该用的分类，避免在「办公资料」里看到「宠物用品」
     const cats = U.catsForKind(allCats, kind);
     const ex = (item && item.extra) || {};
@@ -563,7 +688,7 @@ const App = {
         { key: 'x_year', label: '会计年度', type: 'number', value: ex.year || '', placeholder: '如 2026' },
         { key: 'x_org', label: '来文 / 归档单位', value: ex.org || '' },
         { key: 'x_amount', label: '涉及金额（元）', type: 'number', min: 0, step: '0.01', value: ex.amount === 0 ? '' : ex.amount || '' },
-        { key: 'x_keep_until', label: '保管期限至', type: 'dateshort', value: ex.keep_until || '', placeholder: '如 2031-12-31，或 +5y / 5年 / 1231 / x', hint: '这份资料该保存到哪天；办公资料页可以一键筛出已过保管期的。可以直接写「+5y」这种速记' }
+        { key: 'x_keep_until', label: '保管期限至', type: 'dateshort', full: true, value: ex.keep_until || '', placeholder: '如 2031-12-31，或 +5y / 5年 / 1231 / x', hint: '这份资料该保存到哪天；办公资料页可以一键筛出已过保管期的。可以直接写「+5y」这种速记' }
       ],
       book: [
         { key: 'x_author', label: '作者', value: ex.author || '' },
@@ -601,22 +726,20 @@ const App = {
             : '支持一个物品绑定多个条码（不同包装或不同渠道）'
         };
 
+    /**
+     * 字段顺序（方案 E）：**高频在上，低频 / 占空间的下**。
+     *
+     * 原来的顺序是「想到一个加一个」长出来的：图标和条码排在第 2、3 位，
+     * 而每次录东西都要填的「分类 / 数量 / 位置」反而被挤到下面。
+     * 手机上表单是单列的（02-mobile.css 把 .form-grid 压成一列），
+     * 于是用户得先滚过一整行图标和条码，才看得到「放哪」。
+     *
+     * 现在：名称 → 分类＋数量（并排）→ 位置 → 条码 → 内部编码 → 单位＋单价
+     *      → 保质期 / 专属字段 → 标签 → 备注 → 图片 → 图标
+     */
     const fields = [
       { key: 'name', label: meta.nameLabel, value: v.name, required: true, placeholder: meta.namePh, full: true },
-      {
-        key: 'icon',
-        label: '图标',
-        type: 'static',
-        full: true,
-        html: '<div class="icon-field" id="iconField"></div>'
-      },
-      codeField,
-      {
-        key: 'code',
-        label: '内部编码',
-        value: v.code || '',
-        hint: '没有条码的东西靠它当身份标识（可打印成二维码贴上去）；留空会在保存时自动生成'
-      },
+      // 分类 + 数量并排一行：录一件东西时最常动的是这两格
       {
         key: 'category_id',
         label: kind === 'doc' ? '资料类别' : kind === 'book' ? '图书类别' : '分类',
@@ -624,15 +747,26 @@ const App = {
         value: v.category_id || '',
         options: [{ value: '', label: '未分类' }].concat(cats.map((c) => ({ value: c.id, label: c.name })))
       },
+      { key: 'quantity', label: kind === 'book' ? '册数' : kind === 'doc' ? '份数' : '数量', type: 'number', min: 0, value: v.quantity, step: '1' },
+      // 位置路径通常很长，占满一行才读得全
       {
         key: 'location_id',
         label: '收纳位置',
         type: 'select',
+        full: true,
         value: v.location_id || '',
         options: [{ value: '', label: '未指定' }].concat(locs.map((l) => ({ value: l.id, label: l.path })))
       },
-      { key: 'quantity', label: kind === 'book' ? '册数' : kind === 'doc' ? '份数' : '数量', type: 'number', min: 0, value: v.quantity, step: '1' },
-      { key: 'unit', label: '单位', value: v.unit || meta.one, placeholder: '件 / 瓶 / 盒 / 包' }
+      codeField,
+      {
+        key: 'code',
+        label: '内部编码',
+        full: true,
+        value: v.code || '',
+        hint: '没有条码的东西靠它当身份标识（可打印成二维码贴上去）；留空会在保存时自动生成'
+      },
+      { key: 'unit', label: '单位', value: v.unit || meta.one, placeholder: '件 / 瓶 / 盒 / 包' },
+      { key: 'price', label: kind === 'book' ? '定价（元）' : '单价（元）', type: 'number', min: 0, step: '0.01', value: v.price === 0 ? '' : v.price || '' }
     ];
 
     // 保质期只对普通物品有意义；资料和图书换成各自的专属字段
@@ -640,22 +774,35 @@ const App = {
       fields.push(
         { key: 'production_date', label: '生产日期', type: 'dateshort', value: v.production_date || '', placeholder: '如 2026-05-17，或 -30天 / 0517', hint: '包装上印的日期。可以直接写「-30天」「0517」这类速记' },
         { key: 'shelf_life_days', label: '保质期（天）', type: 'number', min: 0, value: v.shelf_life_days || 0, hint: '填了生产日期+天数会自动算到期日' },
-        { key: 'expiry_date', label: '到期日期', type: 'dateshort', value: v.expiry_date || '', placeholder: '如 2027-05-17，或 +1y / 3个月 / 0517', hint: '想写「一年后」就直接填 +1y；填 x 表示不设期限' }
+        // 到期日期独占一行：它常常是「生产日期 + 天数」算出来的结果，单独摆着看得清
+        { key: 'expiry_date', label: '到期日期', type: 'dateshort', full: true, value: v.expiry_date || '', placeholder: '如 2027-05-17，或 +1y / 3个月 / 0517', hint: '想写「一年后」就直接填 +1y；填 x 表示不设期限' }
       );
     } else {
       extraFields.forEach((f) => fields.push(f));
     }
 
     fields.push(
-      { key: 'price', label: kind === 'book' ? '定价（元）' : '单价（元）', type: 'number', min: 0, step: '0.01', value: v.price === 0 ? '' : v.price || '' },
       { key: 'tags', label: '标签', value: (v.tags || []).join(' , '), placeholder: '多个标签用逗号分隔', full: true },
       { key: 'note', label: '备注', type: 'textarea', value: v.note || '', rows: 3, full: true, placeholder: '存放注意事项、用途等' }
     );
+
+    // 图标固定收在最后（方案 E）：有照片时根本不会看它，是最低频的一格；
+    // 它又占满一整行，摆在前排会把「分类 / 位置」这些高频字段顶到滚动区外面去。
+    // 图片行由 onMount 插到这一行**前面**（照片比图标常用一档）。
+    fields.push({
+      key: 'icon',
+      label: '图标',
+      type: 'static',
+      full: true,
+      html: '<div class="icon-field" id="iconField"></div>'
+    });
 
     await C.form({
       title: id ? '编辑' + meta.label : '新增' + meta.label,
       fields,
       wide: true,
+      // 字段说明收进「?」（方案 E）：这张表单字段最多，7 行灰字说明把弹窗撑得很长
+      compactHints: true,
       okText: id ? '保存修改' : '添加',
       extraHtml:
         `<div class="form-hint" id="expiryPreview" style="margin-top:10px"></div>` +
@@ -670,7 +817,7 @@ const App = {
         if (preset.lookupIsbn) App._fillBookByIsbn(box, preset.lookupIsbn);
 
         // ---- 图标选择：静态占位行 → 点按钮弹图标库 ----
-        let chosenIcon = (item && item.icon) || '';
+        // chosenIcon 已在 openItemEditor 作用域声明 —— onSubmit 也要读它
         const iconField = box.querySelector('#iconField');
         const renderIconField = () => {
           if (!iconField) return;
@@ -727,10 +874,67 @@ const App = {
           wrap.appendChild(btn);
         }
 
+        // ---- 分类下拉旁边给一个「＋ 新建」----
+        // 「录到一半发现没有合适的分类」是最常见的场景，不该要求用户先关掉表单、
+        // 跑去设置页建好、再回来重填。就地建完把新分类塞进下拉并选中，
+        // 表单里已经填好的字段一个字都不会丢。
+        const catEl = get('category_id');
+        if (catEl) {
+          const catRow = catEl.closest('.form-row');
+          const catWrap = document.createElement('div');
+          catWrap.className = 'inline-field';
+          catEl.parentNode.insertBefore(catWrap, catEl);
+          catWrap.appendChild(catEl);
+          const newCatBtn = document.createElement('button');
+          newCatBtn.type = 'button';
+          newCatBtn.className = 'btn btn-sm';
+          newCatBtn.textContent = '＋ 新建';
+          newCatBtn.title = '新建一个分类';
+          catWrap.appendChild(newCatBtn);
+
+          const addCatRow = document.createElement('div');
+          addCatRow.className = 'form-row full';
+          addCatRow.hidden = true;
+          addCatRow.innerHTML =
+            '<div class="form-inline">' +
+              '<input class="input" id="newCatName" placeholder="新分类名称，例如：露营装备">' +
+              '<button class="btn btn-primary btn-sm" id="btnNewCatOk" type="button">新建</button>' +
+              '<button class="btn btn-sm" id="btnNewCatCancel" type="button">取消</button>' +
+            '</div>';
+          // 插在「分类 + 数量」这一行**之后**：分类和数量现在是并排的一对，
+          // 插在它们中间会把这对拆开（数量被顶到下一行）。
+          const afterRow = (get('quantity') && get('quantity').closest('.form-row')) || catRow;
+          if (afterRow && afterRow.parentNode) afterRow.parentNode.insertBefore(addCatRow, afterRow.nextSibling);
+
+          const closeAddCat = () => {
+            addCatRow.hidden = true;
+            addCatRow.querySelector('#newCatName').value = '';
+          };
+          newCatBtn.onclick = () => {
+            addCatRow.hidden = !addCatRow.hidden;
+            if (!addCatRow.hidden) addCatRow.querySelector('#newCatName').focus();
+          };
+          addCatRow.querySelector('#btnNewCatCancel').onclick = closeAddCat;
+          addCatRow.querySelector('#btnNewCatOk').onclick = async () => {
+            const name = addCatRow.querySelector('#newCatName').value.trim();
+            if (!name) return C.toast('请填写分类名称', 'warn');
+            // kind 必须传：分类属于哪个栏目是靠 key 认的（store 会把它写进 key），
+            // 不传的话在图书页新建的分类会被当成物品分类，切到图书页就找不到了。
+            const r = await window.api.call('categories.save', { name, kind });
+            if (!r.ok) return C.toast(r.error, 'err');
+            const opt = document.createElement('option');
+            opt.value = r.data.id;
+            opt.textContent = r.data.name;
+            catEl.appendChild(opt);
+            catEl.value = r.data.id;
+            cats.push(r.data);
+            closeAddCat();
+            C.toast('已新建分类「' + r.data.name + '」', 'ok');
+          };
+        }
+
         // ---- 物品图片：拍照/选图 → 压缩出缩略图 ----
-        let pending = null;      // 新选/新拍的图 {full, thumb, w, h}
-        let removed = false;     // 是否点了「移除」
-        const existingImageId = item ? item.image_id || '' : '';
+        // pending / removed / existingImageId 已在 openItemEditor 作用域声明（onSubmit 也要读）
 
         const imgRow = document.createElement('div');
         imgRow.className = 'form-row full';
@@ -746,11 +950,12 @@ const App = {
             '</div>' +
             '<div class="form-hint" id="imgHint">拍张照，列表里会显示缩略图，点缩略图可看大图</div>' +
           '</div>';
-        // 放在「图标」行后面：先决定用图标还是用照片，再决定照片
+        // 插在「图标」行**前面**：图标是最低频的一格、固定收在最后，
+        // 照片比它常用一档，所以紧挨在它上面（方案 E）。
         const iconRow = iconField ? iconField.closest('.form-row') : null;
-        const nameRow = get('name') && get('name').closest('.form-row');
-        const anchor = iconRow || nameRow;
-        if (anchor && anchor.parentNode) anchor.parentNode.insertBefore(imgRow, anchor.nextSibling);
+        const noteRow = get('note') && get('note').closest('.form-row');
+        if (iconRow && iconRow.parentNode) iconRow.parentNode.insertBefore(imgRow, iconRow);
+        else if (noteRow && noteRow.parentNode) noteRow.parentNode.insertBefore(imgRow, noteRow.nextSibling);
 
         const preview = box.querySelector('#imgPreview');
         const btnView = box.querySelector('#btnViewImg');
@@ -841,18 +1046,22 @@ const App = {
         const nameEl = get('name');
         const bcEl = get('barcodes');
         const updateInfo = () => {
+          // debounce 的 300ms 里用户可能已经提交/取消，弹窗被清空了。
+          // 不守卫就会抛「Cannot set properties of null」，成为一条未捕获异常。
+          const infoEl = box.querySelector('#expiryPreview');
+          if (!infoEl) return;
           const c = (bcEl.value || '').split(',')[0].trim();
           if (!c) return;
           // ISBN / 期刊条码别报成「EAN-13 校验位正确」——对用户来说它就是 ISBN / ISSN
           if (kind === 'book' && U.isBookCode(c)) {
-            box.querySelector('#expiryPreview').textContent = U.isIssnCode(c)
+            infoEl.textContent = U.isIssnCode(c)
               ? '期刊条码（ISSN）格式正确，扫杂志封面上的条码可直接识别成图书'
               : 'ISBN 格式正确，扫书背条码可直接识别成图书';
             return;
           }
           const t = U.barcodeType(c);
           const chk = U.validateEan(c);
-          box.querySelector('#expiryPreview').textContent =
+          infoEl.textContent =
             `条码类型：${t}${chk.valid === true ? '（校验位正确）' : chk.valid === false ? `（${chk.reason}）` : ''}`;
         };
         if (!id) bcEl.addEventListener('input', U.debounce(updateInfo, 300));
@@ -983,6 +1192,207 @@ const App = {
           close(chosen);
         };
         box.querySelector('#btnIconAuto').onclick = () => close('');
+      }
+    });
+  },
+
+  // ---------------- 分类管理 ----------------
+  /**
+   * 分类管理弹窗：新增 / 改名 / 换颜色 / 删除。
+   *
+   * 为什么增删改都挤在这一个弹窗里，而不是各自再弹一个框：
+   * C.form / C.confirm 都用同一个 #modalBox，嵌套打开会把当前这个整个顶掉 ——
+   * 用户会觉得「弹窗突然换了内容」，关掉后也回不到列表。所以这里全部就地完成：
+   * 新建和改名用内联输入行，删除用行内二次确认。
+   *
+   * 分类按栏目分成三组。分类属于哪个栏目是由 key 推出来的（U.catKindOf），
+   * 所以新建时要把栏目传下去（store 会把它写进 key），否则自建分类永远只出现在物品页。
+   *
+   * 返回值 true 表示数据被改过，调用方据此决定要不要刷新当前页面。
+   */
+  manageCategories() {
+    const GROUPS = [['goods', '物品'], ['doc', '办公资料'], ['book', '图书']];
+    const COLORS = ['#D85A30', '#E24B4A', '#378ADD', '#1D9E75', '#888780', '#7F77DD', '#D4537E', '#BA7517', '#4A5BB5', '#2C7A7B'];
+    let changed = false;
+    let editing = null; // { id, kind, name, color }；id 为空串表示「新建」
+    let deleting = null; // 正在确认删除的分类 id
+
+    return C.modal({
+      title: '分类管理',
+      wide: true,
+      bodyHtml: '<div class="cat-mgr" id="catMgr"><div class="empty" style="padding:30px">加载中…</div></div>',
+      footHtml: '<button class="btn btn-primary" data-act="done">完成</button>',
+      onMount: (box, close) => {
+        const host = box.querySelector('#catMgr');
+        let cats = [];
+        let counts = {}; // 分类 id → 该分类下的记录数（删除前要告诉用户会影响多少条）
+
+        const load = async () => {
+          const [cr, ir] = await Promise.all([
+            window.api.call('categories.list'),
+            window.api.call('items.list', {})
+          ]);
+          cats = cr.data || [];
+          counts = {};
+          (ir.data || []).forEach((i) => {
+            if (i.category_id) counts[i.category_id] = (counts[i.category_id] || 0) + 1;
+          });
+        };
+
+        const editRowHtml = () => `
+            <div class="cat-edit">
+              <div class="form-inline">
+                <input class="input" id="catNameInput" value="${U.esc(editing.name)}" placeholder="分类名称，例如：露营装备">
+                <button class="btn btn-primary btn-sm" data-save="1">${editing.id ? '保存' : '新建'}</button>
+                <button class="btn btn-sm" data-cancel="1">取消</button>
+              </div>
+              <div class="cat-swatches">${COLORS.map(
+                (col) =>
+                  `<button type="button" class="cat-sw ${editing.color === col ? 'active' : ''}" data-color="${col}" style="background:${col}" title="${col}"></button>`
+              ).join('')}</div>
+            </div>`;
+
+        const rowHtml = (c) => {
+          if (deleting === c.id) {
+            const n = counts[c.id] || 0;
+            return `<div class="cat-row cat-row-danger">
+              <span class="cat-dot" style="background:${U.esc(c.color)}"></span>
+              <span class="cat-name">删除「${U.esc(c.name)}」？${
+                n ? `该分类下有 ${n} 条记录，会变成「未分类」（不会被删掉）` : '该分类下还没有记录'
+              }</span>
+              <button class="btn btn-sm btn-danger" data-delok="${c.id}">删除</button>
+              <button class="btn btn-sm" data-cancel="1">取消</button>
+            </div>`;
+          }
+          if (editing && editing.id === c.id) return editRowHtml();
+          return `<div class="cat-row">
+            <span class="cat-dot" style="background:${U.esc(c.color)}"></span>
+            <span class="cat-name">${U.esc(c.name)}</span>
+            <span class="cat-count">${counts[c.id] || 0} 件</span>
+            <button class="icon-btn" data-edit="${c.id}" title="改名 / 换颜色">✎</button>
+            <button class="icon-btn danger" data-del="${c.id}" title="删除">🗑</button>
+          </div>`;
+        };
+
+        const render = () => {
+          host.innerHTML = GROUPS.map(([kind, label]) => {
+            const list = U.catsForKind(cats, kind);
+            const adding = editing && !editing.id && editing.kind === kind;
+            return `<div class="cat-group">
+              <div class="cat-group-head">
+                <span class="cat-group-name">${label}<span class="cat-count">${list.length} 个</span></span>
+                <button class="btn btn-sm" data-new="${kind}">＋ 新增</button>
+              </div>
+              ${adding ? editRowHtml() : ''}
+              ${
+                list.length
+                  ? list.map(rowHtml).join('')
+                  : '<div class="form-hint" style="padding:8px 2px">这个栏目还没有分类</div>'
+              }
+            </div>`;
+          }).join('');
+          const inp = host.querySelector('#catNameInput');
+          if (inp) {
+            inp.focus();
+            inp.select();
+          }
+        };
+
+        const refresh = async () => {
+          await load();
+          render();
+        };
+
+        host.onclick = async (e) => {
+          const t = e.target;
+
+          const newBtn = t.closest('[data-new]');
+          if (newBtn) {
+            editing = { id: '', kind: newBtn.dataset.new, name: '', color: COLORS[0] };
+            deleting = null;
+            render();
+            return;
+          }
+
+          const colorBtn = t.closest('[data-color]');
+          if (colorBtn) {
+            // 重绘会把输入框整个换掉，所以先把用户已经敲进去的名字收下来，
+            // 否则「填好名字再挑颜色」这一步会把名字吃掉。
+            const inp = host.querySelector('#catNameInput');
+            if (editing && inp) editing.name = inp.value;
+            if (editing) editing.color = colorBtn.dataset.color;
+            render();
+            return;
+          }
+
+          const editBtn = t.closest('[data-edit]');
+          if (editBtn) {
+            const c = cats.find((x) => x.id === editBtn.dataset.edit);
+            if (!c) return;
+            editing = { id: c.id, kind: U.catKindOf(c.key), name: c.name, color: c.color };
+            deleting = null;
+            render();
+            return;
+          }
+
+          if (t.closest('[data-cancel]')) {
+            editing = null;
+            deleting = null;
+            render();
+            return;
+          }
+
+          const delBtn = t.closest('[data-del]');
+          if (delBtn) {
+            deleting = delBtn.dataset.del;
+            editing = null;
+            render();
+            return;
+          }
+
+          const delOk = t.closest('[data-delok]');
+          if (delOk) {
+            const r = await window.api.call('categories.delete', { id: delOk.dataset.delok });
+            if (!r.ok) return C.toast(r.error, 'err');
+            changed = true;
+            deleting = null;
+            C.toast('已删除分类');
+            await refresh();
+            return;
+          }
+
+          if (t.closest('[data-save]')) {
+            const inp = host.querySelector('#catNameInput');
+            const name = inp ? inp.value.trim() : '';
+            if (!name) return C.toast('请填写分类名称', 'warn');
+            const payload = editing.id
+              ? { id: editing.id, name, color: editing.color }
+              : { name, color: editing.color, kind: editing.kind };
+            const r = await window.api.call('categories.save', payload);
+            if (!r.ok) return C.toast(r.error, 'err');
+            changed = true;
+            C.toast(editing.id ? '已保存' : '已新建分类「' + r.data.name + '」');
+            editing = null;
+            await refresh();
+          }
+        };
+
+        // 在名称输入框里回车 = 点保存
+        box.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter' && e.target && e.target.id === 'catNameInput') {
+            e.preventDefault();
+            const b = host.querySelector('[data-save]');
+            if (b) b.click();
+          }
+        });
+
+        // 关闭按钮和「完成」都要把「改没改过」带回去
+        const closeBtn = box.querySelector('.modal-close');
+        if (closeBtn) closeBtn.onclick = () => close(changed);
+        const doneBtn = box.querySelector('[data-act="done"]');
+        if (doneBtn) doneBtn.onclick = () => close(changed);
+
+        refresh();
       }
     });
   },

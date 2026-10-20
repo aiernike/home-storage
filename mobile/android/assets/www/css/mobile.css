@@ -329,7 +329,12 @@ input, textarea, .selectable {
 /* 筛选标签也要够大才能点中 */
 .chip {
   padding: 7px 13px;
-  font-size: 13px;
+  font-size: var(--fs-md);
+}
+
+/* 筛选区的维度标签：手机上的 chip 更高，行高跟着抬，否则小标题会贴着顶边 */
+.chip-dim {
+  line-height: 30px;
 }
 
 /* 下拉框在手机上是原生控件，给足高度 */
@@ -403,19 +408,26 @@ input, textarea, .selectable {
   min-width: 0;
 }
 
-/* 信息行：一行 + 省略号。位置永远排在最前面，所以最先看到的一定是「放在哪」 */
+/*
+ * 信息行：一行 + 省略号。位置永远排在最前面，所以最先看到的一定是「放在哪」。
+ *
+ * 结构（位置 · 字段 · 标签）和「不换行、超出省略」都在桌面版 .item-meta 里定好了，
+ * 这里只做窄屏收敛：间距收紧、位置最多占 38%。
+ *
+ * ⚠️ 这里原来有一条 `.item-meta span { display: inline; margin-right: 10px }`，
+ * 它把标签（.tag）也一起拍成了 inline —— 手机上的「借出 / ISBN」标签因此
+ * **丢掉了胶囊底色**，变成一坨普通文字（桌面端有底色、手机端没有，一直没人发现）。
+ * 字段之间现在靠「·」分隔，本来也不再需要它。已删除。
+ */
 .item-meta {
-  display: block;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  gap: 6px;
 }
-.item-meta span {
-  display: inline;
-  margin-right: 10px;
+.item-meta-loc {
+  max-width: 38%;
 }
-.item-meta span:last-child {
-  margin-right: 0;
+/* 条形码标签在窄屏再收一点，别把中间那段字段挤没 */
+.item-meta .tag-barcode {
+  max-width: 110px;
 }
 
 /*
@@ -424,3 +436,17 @@ input, textarea, .selectable {
  * 同一个文件里同一个选择器定义两次，后面的悄悄赢，改的人还以为是 36。
  * 已删除：数量按钮统一走上面那一处定义（36×36），别再在这里覆盖。
  */
+
+/* ---------------- 分类管理（设置 → 管理分类） ---------------- */
+
+/* 手机屏窄：分类行里的「N 件」会把分类名挤到换行；删除确认里本来就会说清影响多少条 */
+.cat-row .cat-count { display: none; }
+/* 色块放大到手指点得准的尺寸 */
+.cat-sw { width: 28px; height: 28px; }
+.cat-edit .form-inline { flex-wrap: wrap; }
+
+/* ---------------- 批量整理（物品清单多选归位） ---------------- */
+
+.pick-box { width: 24px; height: 24px; font-size: 15px; }
+/* 操作条吸在滚动区底部，挑东西时不用滚回去找按钮 */
+.pick-bar { bottom: 8px; }

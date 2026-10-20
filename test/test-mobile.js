@@ -434,6 +434,15 @@ async function callSync(fn) {
     ok(`产物是最新源码构建出来的（比对了 ${rels.length} 个源文件）`,
       stale.length === 0,
       '以下文件改过但没重建：' + stale.join('、') + '（执行 npm run build:mobile-assets）');
+
+    // 这份文件里不许出现构建时间戳。
+    // 它曾经有个 generated_at：源码一字未改、每次构建也会变，于是 git 里全是
+    // 无意义 diff，`npm run deploy:diff` 永远提示「要传 build-info.json」，
+    // 真正该传的文件反而被淹掉。去掉之后，「两边一致」才真的等价于「同源」。
+    // 这条断言就是盯着它别被谁顺手加回来。
+    const stampKeys = Object.keys(info).filter((k) => /time|date|generated|built/i.test(k));
+    ok('build-info.json 不含构建时间戳（否则每次构建都产生无意义 diff）',
+      stampKeys.length === 0, '多了：' + stampKeys.join('、'));
   }
 
   // 二维码模块（复用 zxing 自带编码器）要打进包，页面必须引入
@@ -834,6 +843,38 @@ async function callSync(fn) {
   // 主区在纵向布局下必须补 min-height:0，否则会溢出把标签栏顶出屏幕
   ok('主区补了 min-height:0', /\.main\s*\{[^}]*min-height:\s*0/.test(css));
 
+  /* ---- 物品行第二行（方案 C）----
+     资料/图书一行有 6 个字段，390px 上折成三四行的话列表就没法扫了。
+     结构（位置 · 字段 · 标签）和「不换行 + 省略号」由桌面版负责，手机端只做窄屏收敛。 */
+  // ⚠️ 断言「没有某条规则」之前必须先剥掉注释 —— 注释里引用被删掉的规则是很正常的写法，
+  //    不剥的话断言会被自己的注释命中（这个坑在 test-ui 里已经踩过一次）。
+  const cssNoComment = css.replace(/\/\*[\s\S]*?\*\//g, '');
+  ok('手机端信息行间距收紧到 6px', /\.item-meta\s*\{[^}]*gap:\s*6px/.test(cssNoComment));
+  ok('手机端位置列有宽度上限（位置路径可能很长）',
+    /\.item-meta-loc\s*\{[^}]*max-width/.test(cssNoComment));
+  // 这条原来存在过：`.item-meta span { display:inline; margin-right:10px }` 的优先级
+  // 比 .item-meta-loc / .item-meta-fields 高，会静默盖掉它们的 display，
+  // 还给每一段加 10px 外边距。删掉后必须别再加回来。
+  ok('手机端没有 .item-meta span 这种宽泛选择器（会静默盖掉各段的 display）',
+    !/\.item-meta\s+span\s*\{/.test(cssNoComment));
+  ok('手机端给条形码标签留了宽度上限（13 位数字不能把整行吃光）',
+    /\.item-meta\s+\.tag-barcode\s*\{[^}]*max-width/.test(cssNoComment));
+
+  /* ---- 筛选区维度标签（方案 D）---- */
+  ok('手机端维度标签也有行高（小标题不会贴着顶边）',
+    /\.chip-dim\s*\{[^}]*line-height/.test(cssNoComment));
+
+  /* ---- 设计令牌（方案 F）----
+     令牌定义在 style.css 的 :root 里。它要是没被打进产物，
+     var(--fs-md) 会**静默失效** —— 字号回落到继承值，界面上看得出来、测试全绿。 */
+  const styleCss = fs.readFileSync(path.join(OUT, 'css', 'style.css'), 'utf8');
+  const needTok = ['--fs-xs', '--fs-sm', '--fs-md', '--fs-lg', '--fs-xl', '--fs-2xl'];
+  const tokMissing = needTok.filter((k) => !new RegExp(k + '\\s*:').test(styleCss));
+  ok('字号令牌进了手机端产物（没进的话 var(--fs-*) 会静默失效）',
+    tokMissing.length === 0, '缺：' + tokMissing.join('、'));
+  ok('手机端覆盖样式也用同一套令牌（两端不会各写一个数）',
+    /font-size:\s*var\(--fs-md\)/.test(cssNoComment));
+
   /* ---- 安卓外壳 ---- */
   console.log('\n[10] 安卓外壳');
   const manifest = read(path.join(ROOT, 'mobile', 'android', 'AndroidManifest.xml'), '清单');
@@ -966,8 +1007,17 @@ async function callSync(fn) {
     ok('文档提到的 npm 脚本都在 package.json 里',
       ['test:mobile', 'test:mobile-ui', 'build:apk']
         .every((s) => pkgJson.scripts && pkgJson.scripts[s]));
-    // 新增了栏目和内部编码之后，文档也得跟上 —— 文档与功能脱节比没文档更坑人
-    ok('文档写明了 9 个底部标签（不是老的 7 个）', /9 个入口/.test(guide) && !/7 个入口/.test(guide));
+    // 新增了栏目和内部编码之后，文档也得跟上 —— 文档与功能脱节比没文档更坑人。
+    //
+    // 底栏后来从 9 个收敛到 5 个（docs/books/expiry/stats 被 03-bootstrap.js 摘掉，
+    // 手机上改从物品页的筛选 chip 进）。文档必须跟着说 5：
+    // 说 9 的话，用户拿着手机满屏找「资料」标签，怎么都找不到。
+    // 只看「N 个入口对应：」这句结论，别去禁「9」这个字 ——
+    // 文档里紧接着就要说明「电脑端有 9 个入口，手机上省掉了哪 4 个」。
+    ok('文档写明手机端底栏是 5 个标签（不是老的 9 个）',
+      /5 个入口对应/.test(guide) && !/9 个入口对应/.test(guide));
+    ok('文档说清了被省掉的那几个页面在手机上从哪进',
+      /筛选条|筛选/.test(guide) && /资料/.test(guide) && /图书/.test(guide));
     ok('文档提到了办公资料与图书栏目', /办公资料/.test(guide) && /图书/.test(guide));
     ok('文档解释了内部编码', /HS-2026-0001/.test(guide) && /内部编码/.test(guide));
     ok('文档说明了扫码能认 ISBN / 期刊条码', /ISBN/.test(guide) && /977/.test(guide));

@@ -249,6 +249,9 @@ async function initDb() {
       data         JSONB NOT NULL,
       updated_at   TIMESTAMPTZ NOT NULL,
       device       TEXT,
+      -- deleted 是 data->>'deleted' 的冗余副本。客户端判断删除状态一律看 data，
+      -- 这列只服务于「运维直接查库」：想数有多少条墓碑时不必去解 JSONB。
+      -- ⚠️ 它不是权威值，别拿它做业务判断 —— 两处不一致时以 data 为准。
       deleted      BOOLEAN DEFAULT false,
       PRIMARY KEY (user_id, kind, id)
     );

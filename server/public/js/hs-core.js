@@ -469,6 +469,23 @@ const SCHEMA_VERSION = 2;
  */
 const KINDS = ['goods', 'doc', 'book'];
 
+/**
+ * 各类型允许出现在 `extra` 里的字段。
+ *
+ * 为什么要有白名单：`extra` 是个自由对象，字段名拼错（`author` 写成 `auther`）
+ * 以前不报错 —— 存进库、界面永远不显示、导出 CSV 也是空的，还跟着同步传到所有
+ * 设备。用户只会觉得「我明明填了作者，怎么没有」，而系统一句提示都没有。
+ *
+ * ⚠️ 这里的键必须和渲染层表单字段（app.js 里 `x_` 开头的那些）一一对应。
+ * 渲染层加了字段却忘了往这里加，那个字段会**永远存不进去**且不报错 ——
+ * `test-store` 有一条断言盯着两边一致，别只改一处。
+ */
+const KIND_EXTRA_KEYS = {
+  goods: [],
+  doc: ['doc_no', 'year', 'org', 'amount', 'keep_until'],
+  book: ['author', 'publisher', 'pub_year', 'status']
+};
+
 function normalizeKind(k) {
   const v = String(k == null ? '' : k).trim();
   return KINDS.indexOf(v) >= 0 ? v : 'goods';
@@ -730,6 +747,20 @@ function createStore(userDataDir) {
     raw.meta = raw.meta || { createdAt: now() };
     if (!raw.locations.length && !raw.items.length) seed(raw);
 
+    /**
+     * 数据来自更新的版本（用户先用新版打开过，又用旧版打开）。
+     *
+     * 不能按老结构去迁移它 —— 新版本加的字段会被当成「不认识的字段」丢掉。
+     * 也**不能在这里抛异常**：load() 会把异常当成「文件损坏」，进而拿备份来覆盖，
+     * 甚至把主文件和备份都留档之后开一个空库 —— 那是把用户数据推下悬崖。
+     * 所以只做上面那几项「保证结构不崩」的兜底，然后原样返回，
+     * **连 schema 都不改**，这样下次用新版本打开时它还是原来那个版本。
+     */
+    if (from > SCHEMA_VERSION) {
+      console.error(`数据文件来自更新的版本（v${from}），本次不做迁移、按原样加载`);
+      return raw;
+    }
+
     // v1 → v2：物品增加 类型(kind) / 图标(icon) / 内部编码(code) / 类型专属字段(extra)。
     // 老数据没有这些字段，就地补默认值，不迁移数据本身（都是可空字段，补默认即可）。
     if (from < 2) {
@@ -834,6 +865,8 @@ function createStore(userDataDir) {
   }
 
   let saveTimer = null;
+  // 本次会话是否已经备过份（说明见 flush）
+  let backupDone = false;
 
   function save() {
     // 合并短时间内的多次写入，避免频繁 IO
@@ -844,15 +877,22 @@ function createStore(userDataDir) {
   function flush() {
     saveTimer = null;
     try {
-      // 落盘前统一瘦一遍墓碑。删除时已经瘦过了，这里是兜底：
-      // 从服务端拉回来的墓碑可能是完整版（老版本客户端推的），
-      // 不在这里清掉的话它们会一直占着地方。
-      compactTombstones(db);
       const tmp = dbFile + '.tmp';
       fs.writeFileSync(tmp, JSON.stringify(db), 'utf8');
-      // 坏的主文件在 load() 里已经被挪走了，这里只会备份「可信的」主文件
-      if (fs.existsSync(dbFile)) {
+      /**
+       * 备份只在本次会话第一次「有东西可备」的时候做一次。
+       *
+       * 原来是每次落盘都 copyFileSync 整个数据文件 —— 数据文件 5 MB 时，
+       * 连续编辑（120ms 防抖）就等于每秒重复复制几十 MB；而 .bak 的语义本来就是
+       * 「回到这次会话开始前的样子」，每次刷新它反而把这个语义冲淡了。
+       *
+       * 第一次落盘时主文件往往还不存在（新库），那次跳过、**标志不置位**，
+       * 等主文件建起来再备 —— 否则新库会一次备份都留不下。
+       * 坏的主文件在 load() 里已经被挪走了，所以这里备份的一定是可信的主文件。
+       */
+      if (!backupDone && fs.existsSync(dbFile)) {
         fs.copyFileSync(dbFile, dbFile + '.bak');
+        backupDone = true;
       }
       fs.renameSync(tmp, dbFile);
     } catch (e) {
@@ -874,6 +914,26 @@ function createStore(userDataDir) {
     return obj;
   }
 
+  /**
+   * 建一份「按 id 查」的临时索引，供批量路径使用（列表 / 统计 / 临期）。
+   *
+   * 为什么是「临时」而不是常驻全局索引：db 的四个数组会被多处**整体替换**
+   * （load / app.wipe / app.import 的 replace / 同步合并直接改 store.raw），
+   * 常驻索引就得在每个替换点手动失效 —— 漏一处不会报错，只会查到已经不存在的
+   * 旧记录，界面上冒出幽灵数据，极难排查。批量路径里建一次、用完即弃，
+   * 代价是 O(位置数 + 分类数 + 图片数)，换来的是「每条物品不再线性扫描这三个数组」。
+   *
+   * 之前是每条物品各查一遍：2000 件物品 + 5000 张图时，一次列表要跑
+   * 约 2000 × 5000 = 一千万次比较，而每敲一个字搜索都要重来一遍。
+   */
+  function buildLookup() {
+    return {
+      locations: new Map(db.locations.map((l) => [l.id, l])),
+      categories: new Map(db.categories.map((c) => [c.id, c])),
+      images: new Map(db.images.map((x) => [x.id, x]))
+    };
+  }
+
   function daysUntil(dateStr) {
     if (!dateStr) return null;
     const target = new Date(dateStr + 'T00:00:00');
@@ -883,14 +943,35 @@ function createStore(userDataDir) {
     return Math.round((target - today) / 86400000);
   }
 
-  function decorateItem(it) {
-    const loc = it.location_id ? db.locations.find((l) => l.id === it.location_id) : null;
-    const cat = it.category_id ? db.categories.find((c) => c.id === it.category_id) : null;
-    const img = it.image_id ? db.images.find((x) => x.id === it.image_id && !x.deleted) : null;
+  /**
+   * 给物品补上界面要用的关联信息（位置路径、分类名与颜色、图片、保质期状态）。
+   *
+   * @param {object} it 物品记录
+   * @param {object} [lk] 可选的临时索引（buildLookup 的产物）。
+   *   批量路径（列表 / 统计 / 临期）**必须传** —— 不传的话每条物品都要把位置、
+   *   分类、图片三个数组线性扫一遍，物品一多就是平方级的开销。
+   *   单条查询（items.get 之类）不传也没关系，反正只查一次。
+   */
+  function decorateItem(it, lk) {
+    // ⚠️ 只认「确实带着三个 Map」的索引对象。
+    // 必须挡一下：`arr.map(decorateItem)` 这种写法会把**数组下标**当第二个参数传进来
+    // （map 回调的第二参是 index），不挡就会读到 `undefined.get` 直接崩，
+    // 而且崩的地方离写错的地方很远。挡一下最多退化成线性查找，不会炸。
+    const idx = lk && lk.locations && lk.categories && lk.images ? lk : null;
+    const loc = it.location_id
+      ? (idx ? idx.locations.get(it.location_id) : db.locations.find((l) => l.id === it.location_id))
+      : null;
+    const cat = it.category_id
+      ? (idx ? idx.categories.get(it.category_id) : db.categories.find((c) => c.id === it.category_id))
+      : null;
+    const imgRec = it.image_id
+      ? (idx ? idx.images.get(it.image_id) : db.images.find((x) => x.id === it.image_id))
+      : null;
+    const img = imgRec && !imgRec.deleted ? imgRec : null;
     const dl = daysUntil(it.expiry_date);
     return Object.assign({}, it, {
       location_name: loc && !loc.deleted ? loc.name : '',
-      location_path: loc && !loc.deleted ? locationPath(loc.id) : '',
+      location_path: loc && !loc.deleted ? locationPath(loc.id, undefined, idx) : '',
       category_name: cat && !cat.deleted ? cat.name : '',
       category_color: cat && !cat.deleted ? cat.color : '#888780',
       // 分类的稳定 key：界面拿它给「没单独挑过图标」的物品兜底配一个图标。
@@ -911,14 +992,21 @@ function createStore(userDataDir) {
     });
   }
 
-  function locationPath(id, sep) {
+  /**
+   * 位置 id → 「厨房 / 冰箱 / 冷藏室」这样的完整路径。
+   *
+   * @param {object} [lk] 临时索引（见 buildLookup）。批量路径要传 ——
+   *   不传的话每往上一层都要把整个位置数组扫一遍，层级一深就是平方级。
+   */
+  function locationPath(id, sep, lk) {
     sep = sep || ' / ';
+    const get = lk ? (i) => lk.locations.get(i) : (i) => db.locations.find((l) => l.id === i);
     const names = [];
-    let cur = db.locations.find((l) => l.id === id);
+    let cur = get(id);
     let guard = 0;
     while (cur && guard++ < 20) {
       names.unshift(cur.name);
-      cur = cur.parent_id ? db.locations.find((l) => l.id === cur.parent_id) : null;
+      cur = cur.parent_id ? get(cur.parent_id) : null;
     }
     return names.join(sep);
   }
@@ -929,23 +1017,86 @@ function createStore(userDataDir) {
     return item.barcode ? [item.barcode] : [];
   }
 
+  /**
+   * 导出用的设置副本：**剔除同步令牌**。
+   *
+   * 令牌是服务端签发的 JWT（90 天有效），拿着它就能读写这个账号在 NAS 上的
+   * 全部数据。而「导出备份」恰恰是被界面鼓励的操作 —— 图片存不下时的提示就写着
+   * 「请先导出备份」。备份又常被发到家庭群、传网盘、发给技术支持，令牌跟着走，
+   * 等于把 NAS 的钥匙一起送出去。
+   *
+   * 这里删掉这个键（而不是置空）：置空的话，把备份导回本机反而会把自己的登录
+   * 状态清掉；删掉键则不会覆盖本机已有的令牌。
+   */
+  function exportSettings() {
+    const s = Object.assign({}, db.settings);
+    delete s.syncToken;
+    return s;
+  }
+
+  /**
+   * 导入时永远不采纳备份里的同步令牌 —— 以本机为准。
+   *
+   * 光靠「导出时剔除」不够：备份文件是普通 JSON，谁都能手工编辑。塞一个别人的
+   * 令牌进来，本机下次同步就会把自己的数据推到别人账号里，而界面上只显示
+   * 「同步完成」。
+   */
+  function withoutSyncToken(s) {
+    const o = Object.assign({}, s || {});
+    delete o.syncToken;
+    return o;
+  }
+
+  /**
+   * 按类型过滤 extra 的字段名（白名单见模块顶部的 KIND_EXTRA_KEYS）。
+   * 拼错的字段名在这里被丢掉，而不是静默存进库、界面永远显示不出来。
+   */
+  function sanitizeExtra(kind, raw) {
+    if (!raw || typeof raw !== 'object') return {};
+    const allow = KIND_EXTRA_KEYS[normalizeKind(kind)] || [];
+    const out = {};
+    Object.keys(raw).forEach((k) => {
+      if (allow.indexOf(k) >= 0) out[k] = raw[k];
+    });
+    return out;
+  }
+
   // ---------------- 动作路由 ----------------
 
   const actions = {
     // ---- 总体 ----
-    'app.summary': () => ({
-      items: live(db.items).length,
-      locations: live(db.locations).length,
-      expired: live(db.items).filter((i) => daysUntil(i.expiry_date) !== null && daysUntil(i.expiry_date) < 0).length,
-      soon: live(db.items).filter((i) => {
+    'app.summary': () => {
+      // 一趟遍历算完所有计数。原来是 live(db.items) 出现 6 次，
+      // 同一条记录的 daysUntil 还要算两遍（expired 一次、soon 一次）。
+      const warn = db.settings.expiryWarnDays || 7;
+      const items = live(db.items);
+      let expired = 0;
+      let soon = 0;
+      let noLocation = 0;
+      let docs = 0;
+      let books = 0;
+      items.forEach((i) => {
         const d = daysUntil(i.expiry_date);
-        return d !== null && d >= 0 && d <= (db.settings.expiryWarnDays || 7);
-      }).length,
-      noLocation: live(db.items).filter((i) => !i.location_id).length,
-      docs: live(db.items).filter((i) => normalizeKind(i.kind) === 'doc').length,
-      books: live(db.items).filter((i) => normalizeKind(i.kind) === 'book').length,
-      settings: db.settings
-    }),
+        if (d !== null) {
+          if (d < 0) expired++;
+          else if (d <= warn) soon++;
+        }
+        if (!i.location_id) noLocation++;
+        const k = normalizeKind(i.kind);
+        if (k === 'doc') docs++;
+        else if (k === 'book') books++;
+      });
+      return {
+        items: items.length,
+        locations: live(db.locations).length,
+        expired,
+        soon,
+        noLocation,
+        docs,
+        books,
+        settings: db.settings
+      };
+    },
 
     'app.settings.get': () => db.settings,
 
@@ -965,7 +1116,7 @@ function createStore(userDataDir) {
       images: db.images.map((img) =>
         Object.assign({}, img, { full: img.deleted ? '' : readImageFull(img.id) })
       ),
-      settings: db.settings
+      settings: exportSettings()
     }),
 
     'app.import': (p) => {
@@ -1011,7 +1162,8 @@ function createStore(userDataDir) {
         db.items = raw.items || [];
         db.categories = raw.categories && raw.categories.length ? raw.categories : db.categories;
         imagesFailed = ingestImages(raw.images, true);
-        if (raw.settings) Object.assign(db.settings, raw.settings);
+        // 备份里的设置照单全收，但令牌除外 —— 令牌永远以本机为准
+        if (raw.settings) Object.assign(db.settings, withoutSyncToken(raw.settings));
         // 只删「旧库里不再被引用」的；刚导入进来的文件不能碰
         const keepImageIds = new Set(db.images.map((x) => x.id));
         staleImageIds.forEach((id) => {
@@ -1139,9 +1291,17 @@ function createStore(userDataDir) {
 
     // ---- 位置 ----
     'locations.list': () => {
+      // 先把物品按位置分一次桶，再逐个位置取数。
+      // 原来是每个位置都 live(db.items).filter(...) 扫一遍全表 —— 位置数 × 物品数。
+      const lk = buildLookup();
+      const countByLoc = new Map();
+      live(db.items).forEach((i) => {
+        if (!i.location_id) return;
+        countByLoc.set(i.location_id, (countByLoc.get(i.location_id) || 0) + 1);
+      });
       const list = live(db.locations).map((l) => {
-        const path = locationPath(l.id);
-        const direct = live(db.items).filter((i) => i.location_id === l.id).length;
+        const path = locationPath(l.id, undefined, lk);
+        const direct = countByLoc.get(l.id) || 0;
         return Object.assign({}, l, {
           path,
           depth: path.split(' / ').length - 1,
@@ -1156,6 +1316,7 @@ function createStore(userDataDir) {
     },
 
     'locations.tree': () => {
+      const lk = buildLookup();
       const all = live(db.locations).slice().sort((a, b) => (a.sort || 0) - (b.sort || 0) || a.name.localeCompare(b.name, 'zh-CN'));
       const byParent = new Map();
       all.forEach((l) => {
@@ -1163,20 +1324,25 @@ function createStore(userDataDir) {
         if (!byParent.has(key)) byParent.set(key, []);
         byParent.get(key).push(l);
       });
-      const items = live(db.items);
+      // 物品数先分一次桶：原来是每个位置（递归里每个节点）都扫一遍物品表
+      const countByLoc = new Map();
+      live(db.items).forEach((i) => {
+        if (!i.location_id) return;
+        countByLoc.set(i.location_id, (countByLoc.get(i.location_id) || 0) + 1);
+      });
       const build = (parentId, depth) => {
         const list = byParent.get(parentId || '__root__') || [];
         const out = [];
         list.forEach((l) => {
           const children = build(l.id, depth + 1);
-          const direct = items.filter((i) => i.location_id === l.id).length;
+          const direct = countByLoc.get(l.id) || 0;
           const total = direct + children.reduce((s, c) => s + c.total_count, 0);
           out.push(
             Object.assign({}, l, {
               depth,
               // path 供「上级位置」下拉等场景显示完整层级路径。
               // 不能省：渲染层从树上构建扁平列表，缺了它标签会变成 undefined。
-              path: locationPath(l.id),
+              path: locationPath(l.id, undefined, lk),
               direct_count: direct,
               total_count: total,
               nfc_tag: l.nfc_tag || '',
@@ -1286,15 +1452,10 @@ function createStore(userDataDir) {
       });
     },
 
-    'locations.move': (p) => {
-      const loc = db.locations.find((l) => l.id === p.id);
-      if (!loc) throw new Error('位置不存在');
-      if (p.parent_id && wouldCycle(p.id, p.parent_id)) throw new Error('不能移动到自己的下级位置');
-      loc.parent_id = p.parent_id || null;
-      touch(loc);
-      save();
-      return loc;
-    },
+    // 改层级没有单独的 action：`locations.save` 传 parent_id 就是这件事，
+    // 而且它同样带环检测。曾经有个 locations.move 做一模一样的事，已经删掉 ——
+    // 两套写法做同一件事，将来改一处漏一处。
+    // 界面上的入口在「位置管理 → 编辑」，那个「上级位置」下拉提交的就是 locations.save。
 
     // ---- 分类 ----
     'categories.list': () => live(db.categories).slice().sort((a, b) => (a.sort || 0) - (b.sort || 0)),
@@ -1304,16 +1465,31 @@ function createStore(userDataDir) {
       if (p.id) {
         const c = db.categories.find((x) => x.id === p.id);
         if (!c) throw new Error('分类不存在');
-        if (p.name != null) c.name = String(p.name).trim();
+        if (p.name != null) {
+          // 名称是分类唯一的可见标识。改成空的会在筛选条上留下一个空白 chip，
+          // 点进去还筛不出任何东西 —— 与其静默存下，不如直接拦住。
+          const name = String(p.name).trim();
+          if (!name) throw new Error('分类名称不能为空');
+          c.name = name;
+        }
         if (p.color != null) c.color = p.color;
         touch(c);
         save();
         return c;
       }
+      const name = String(p.name || '').trim();
+      if (!name) throw new Error('请填写分类名称');
+      // 新建分类的 key 用「栏目:随机串」。
+      //
+      // 分类属于哪个栏目（物品 / 办公资料 / 图书）是从 key 推出来的（渲染层 U.catKindOf）：
+      // 预置分类的 key 是「食品」「合同」「图书」这类短名，对不上的一律算物品。
+      // 不把栏目写进 key 的话，用户新建的「会计凭证」永远只会出现在物品页的分类下拉里，
+      // 在办公资料页怎么找都找不到 —— 而这类自定义分类恰恰是资料页最需要的。
+      const kind = ['goods', 'doc', 'book'].indexOf(p.kind) >= 0 ? p.kind : 'goods';
       const c = {
         id: uid(),
-        key: p.key || '',
-        name: String(p.name || '').trim() || '新分类',
+        key: p.key || kind + ':' + uid(),
+        name,
         color: p.color || '#888780',
         sort: live(db.categories).length,
         created_at: t,
@@ -1343,8 +1519,35 @@ function createStore(userDataDir) {
 
     // ---- 物品 ----
     'items.list': (p) => {
-      let list = live(db.items).map(decorateItem);
+      const lk = buildLookup();
       const f = p || {};
+      const warn = db.settings.expiryWarnDays || 7;
+      // 下面三个小函数让「筛选」能在**原始记录**上做，不必先把记录装饰一遍。
+      // 装饰要算位置路径、分类名色、图片、保质期状态，是这条路径里最贵的一步。
+      const expiryStateOf = (it) => {
+        const d = daysUntil(it.expiry_date);
+        return d === null ? 'none' : d < 0 ? 'expired' : d <= warn ? 'soon' : 'ok';
+      };
+      const catNameOf = (it) => {
+        const c = it.category_id ? lk.categories.get(it.category_id) : null;
+        return c && !c.deleted ? c.name || '' : '';
+      };
+      const locPathOf = (it) => {
+        const l = it.location_id ? lk.locations.get(it.location_id) : null;
+        return l && !l.deleted ? locationPath(l.id, undefined, lk) : '';
+      };
+
+      /**
+       * ⚠️ 顺序很重要：**先筛，后装饰**。
+       *
+       * 原来是先把全库每条都 decorateItem 一遍，再拿装饰结果去筛。于是搜索框每敲
+       * 一个字，都要给全库每一条算一遍位置路径、分类、图片和保质期状态 ——
+       * 命中往往只有一两条，其余全是白干的。先筛后装饰，装饰量 = 命中量。
+       *
+       * 排序键（updated_at / created_at / name / expiry_date / quantity）全是原始字段，
+       * 所以排序也可以放在装饰之前。
+       */
+      let list = live(db.items);
       if (f.keyword) {
         const k = String(f.keyword).toLowerCase();
         list = list.filter(
@@ -1354,25 +1557,33 @@ function createStore(userDataDir) {
             (i.barcodes || []).some((b) => String(b).toLowerCase().includes(k)) ||
             (i.code || '').toLowerCase().includes(k) ||
             (i.note || '').toLowerCase().includes(k) ||
-            (i.category_name || '').toLowerCase().includes(k) ||
-            (i.location_path || '').toLowerCase().includes(k) ||
             // 类型专属字段也要能搜到：搜「张老师」「人民邮电」「2026」都要有结果
-            Object.keys(i.extra || {}).some((key) => String(i.extra[key] || '').toLowerCase().includes(k))
+            Object.keys(i.extra || {}).some((key) => String(i.extra[key] || '').toLowerCase().includes(k)) ||
+            // 分类名和位置路径要查关联表 —— 走索引直接查，不用先装饰
+            catNameOf(i).toLowerCase().includes(k) ||
+            locPathOf(i).toLowerCase().includes(k)
         );
       }
       if (f.kind) {
         const kinds = Array.isArray(f.kind) ? f.kind : [f.kind];
-        list = list.filter((i) => kinds.indexOf(i.kind) >= 0);
+        list = list.filter((i) => kinds.indexOf(normalizeKind(i.kind)) >= 0);
       }
       if (f.location_id) {
         const ids = subtreeIds(f.location_id);
         list = list.filter((i) => i.location_id && ids.has(i.location_id));
       }
       if (f.category_id) list = list.filter((i) => i.category_id === f.category_id);
-      if (f.expiry === 'expired') list = list.filter((i) => i.expiry_state === 'expired');
-      else if (f.expiry === 'soon') list = list.filter((i) => i.expiry_state === 'soon');
-      else if (f.expiry === 'has') list = list.filter((i) => !!i.expiry_date);
-      else if (f.expiry === 'none') list = list.filter((i) => !i.expiry_date);
+      if (f.expiry) {
+        const want = f.expiry;
+        list = list.filter((i) => {
+          const st = expiryStateOf(i);
+          if (want === 'expired') return st === 'expired';
+          if (want === 'soon') return st === 'soon';
+          if (want === 'has') return !!i.expiry_date;
+          if (want === 'none') return !i.expiry_date;
+          return true;
+        });
+      }
 
       const sort = f.sort || 'updated_desc';
       const cmp = {
@@ -1388,7 +1599,9 @@ function createStore(userDataDir) {
         qty_desc: (a, b) => (Number(b.quantity) || 0) - (Number(a.quantity) || 0)
       }[sort];
       if (cmp) list.sort(cmp);
-      return list;
+
+      // 到这一步才装饰，而且只装饰筛出来的这些
+      return list.map((it) => decorateItem(it, lk));
     },
 
     'items.get': (p) => {
@@ -1442,6 +1655,10 @@ function createStore(userDataDir) {
     'items.save': (p) => {
       const t = now();
       const codes = normalizeBarcodes(p.barcodes, p.barcode);
+      // 「压根没提条码」和「明确把条码清空」是两回事：
+      // 前者不该动原值，后者要真的清掉。靠 codes 分不出来（两种都是空数组），
+      // 所以看入参里到底有没有这两个键。
+      const hasBarcodeInput = p.barcodes !== undefined || p.barcode !== undefined;
       if (!p.id && !String(p.name || '').trim()) throw new Error('请填写物品名称');
 
       // 条码唯一性校验
@@ -1460,23 +1677,35 @@ function createStore(userDataDir) {
         if (dupCode) throw new Error(`内部编码 ${code} 已被「${dupCode.name}」占用`);
       }
 
+      /**
+       * ⚠️ 这里的每个字段都必须是「传了才改，没传保持原样」。
+       *
+       * 以前不是这样：name/code/kind/icon 是「没传就不动」，而 category_id、
+       * location_id 会变成 null，quantity 会变成 1，unit 会变成「件」，tags 会清空，
+       * 日期和备注会清空，price 会变成 0 —— 两套语义混在同一个对象里。
+       *
+       * 界面提交表单时总是把每个字段都算好传过来，所以一直没出事。但只要有人写一个
+       * 「只改名字」的入口（批量改分类、扫到条码先建一条再回填名称），物品的位置和
+       * 分类就会被**静默清空**，而界面照样提示「已保存」。默认值统一挪到新建分支去补。
+       */
       const base = {
         name: p.name != null ? String(p.name).trim() : undefined,
-        barcode: codes[0] || '',
-        barcodes: codes,
+        barcode: hasBarcodeInput ? codes[0] || '' : undefined,
+        barcodes: hasBarcodeInput ? codes : undefined,
         code: code,
         kind: p.kind != null ? normalizeKind(p.kind) : undefined,
         icon: p.icon != null ? String(p.icon) : undefined,
-        category_id: p.category_id || null,
-        location_id: p.location_id || null,
-        quantity: p.quantity != null && p.quantity !== '' ? Number(p.quantity) || 0 : 1,
-        unit: p.unit || '件',
-        production_date: p.production_date || '',
-        expiry_date: p.expiry_date || '',
-        shelf_life_days: p.shelf_life_days != null ? Number(p.shelf_life_days) || 0 : 0,
-        price: p.price != null && p.price !== '' ? Number(p.price) || 0 : 0,
-        note: p.note || '',
-        tags: Array.isArray(p.tags) ? p.tags : []
+        category_id: p.category_id !== undefined ? p.category_id || null : undefined,
+        location_id: p.location_id !== undefined ? p.location_id || null : undefined,
+        quantity: p.quantity != null && p.quantity !== '' ? Number(p.quantity) || 0 : undefined,
+        unit: p.unit != null && p.unit !== '' ? String(p.unit) : undefined,
+        production_date: p.production_date != null ? p.production_date : undefined,
+        expiry_date: p.expiry_date != null ? p.expiry_date : undefined,
+        shelf_life_days:
+          p.shelf_life_days != null && p.shelf_life_days !== '' ? Number(p.shelf_life_days) || 0 : undefined,
+        price: p.price != null && p.price !== '' ? Number(p.price) || 0 : undefined,
+        note: p.note != null ? p.note : undefined,
+        tags: Array.isArray(p.tags) ? p.tags : undefined
       };
 
       if (p.id) {
@@ -1485,9 +1714,10 @@ function createStore(userDataDir) {
         Object.keys(base).forEach((k) => {
           if (base[k] !== undefined) it[k] = base[k];
         });
-        // extra 是增量合并：界面只改了「作者」，不能把「出版社」一起冲掉
+        // extra 是增量合并：界面只改了「作者」，不能把「出版社」一起冲掉。
+        // 合并前先按类型过一遍白名单，拼错的字段名不该进来。
         if (p.extra && typeof p.extra === 'object') {
-          it.extra = Object.assign({}, it.extra || {}, p.extra);
+          it.extra = Object.assign({}, it.extra || {}, sanitizeExtra(it.kind, p.extra));
         }
         if (!it.extra || typeof it.extra !== 'object') it.extra = {};
         it.kind = normalizeKind(it.kind);
@@ -1507,11 +1737,30 @@ function createStore(userDataDir) {
         },
         base
       );
+      // base 里那些「没传就不改」留下的 undefined，在新建时要补成合理的初始值 ——
+      // 更新分支要的是「保持原样」，新建分支要的是「有个默认值」，两件事不能共用一套写法。
+      const NEW_DEFAULTS = {
+        barcode: '',
+        barcodes: [],
+        category_id: null,
+        location_id: null,
+        quantity: 1,
+        unit: '件',
+        production_date: '',
+        expiry_date: '',
+        shelf_life_days: 0,
+        price: 0,
+        note: '',
+        tags: []
+      };
+      Object.keys(NEW_DEFAULTS).forEach((k) => {
+        if (it[k] === undefined) it[k] = NEW_DEFAULTS[k];
+      });
       it.name = base.name || '未命名物品';
       it.kind = normalizeKind(base.kind);
       it.icon = base.icon || '';
       it.code = base.code || '';
-      it.extra = p.extra && typeof p.extra === 'object' ? Object.assign({}, p.extra) : {};
+      it.extra = sanitizeExtra(it.kind, p.extra);
       db.items.push(it);
       save();
       return decorateItem(it);
@@ -1552,6 +1801,11 @@ function createStore(userDataDir) {
       it.quantity = Math.max(0, (Number(it.quantity) || 0) + delta);
       if (!Array.isArray(it.logs)) it.logs = [];
       it.logs.push({ at: now(), delta, note: p.note || '' });
+      // 只留最近 50 条。常用的东西（比如每天消耗的食品）一年能攒 365 条，
+      // 而 logs 会跟着物品一起同步到所有设备、也不会被墓碑瘦身 —— 白白占带宽和体积。
+      // 用户真正关心的是「最近几次是什么时候消耗的」。
+      const LOG_LIMIT = 50;
+      if (it.logs.length > LOG_LIMIT) it.logs = it.logs.slice(-LOG_LIMIT);
       touch(it);
       save();
       return decorateItem(it);
@@ -1574,49 +1828,57 @@ function createStore(userDataDir) {
 
     'items.expiringSoon': (p) => {
       const days = p && p.days != null ? Number(p.days) : db.settings.expiryWarnDays || 7;
+      const lk = buildLookup();
       return live(db.items)
-        .map(decorateItem)
+        .map((it) => decorateItem(it, lk))
         .filter((i) => i.days_left !== null && i.days_left <= days)
         .sort((a, b) => a.days_left - b.days_left);
     },
 
     'items.stats': () => {
-      const items = live(db.items).map(decorateItem);
+      const lk = buildLookup();
+      const items = live(db.items).map((it) => decorateItem(it, lk));
       const byCat = {};
-      items.forEach((i) => {
-        const k = i.category_name || '未分类';
-        byCat[k] = (byCat[k] || 0) + 1;
-      });
       const byLoc = {};
+      // 按类型拆分：办公资料 / 书籍 是独立页面，统计里也要能单独看到体量
+      const kinds = { goods: 0, doc: 0, book: 0 };
+
+      // 近 6 个月的入库趋势。先把这 6 个月算出来建个索引，再一趟遍历分桶 ——
+      // 原来是每个月都 live(db.items).filter(...) 扫一遍全表，6 个月就是 6 次全表扫描。
+      const trend = [];
+      const base = new Date();
+      const monthIndex = new Map();
+      for (let m = 5; m >= 0; m--) {
+        const d = new Date(base.getFullYear(), base.getMonth() - m, 1);
+        const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+        monthIndex.set(key, trend.length);
+        trend.push({ name: key.slice(5) + '月', value: 0 });
+      }
+
+      let totalValue = 0;
+      let totalQty = 0;
       items.forEach((i) => {
-        const k = i.location_path || '未指定位置';
-        byLoc[k] = (byLoc[k] || 0) + 1;
+        const cat = i.category_name || '未分类';
+        byCat[cat] = (byCat[cat] || 0) + 1;
+        const loc = i.location_path || '未指定位置';
+        byLoc[loc] = (byLoc[loc] || 0) + 1;
+        const kd = i.kind || 'goods';
+        kinds[kd] = (kinds[kd] || 0) + 1;
+        totalValue += (Number(i.price) || 0) * (Number(i.quantity) || 1);
+        totalQty += Number(i.quantity) || 0;
+        const mi = monthIndex.get(String(i.created_at || '').slice(0, 7));
+        if (mi !== undefined) trend[mi].value++;
       });
+
       const top = (obj, n) =>
         Object.entries(obj)
           .map(([name, value]) => ({ name, value }))
           .sort((a, b) => b.value - a.value)
           .slice(0, n);
-      const totalValue = items.reduce((s, i) => s + (Number(i.price) || 0) * (Number(i.quantity) || 1), 0);
 
-      // 按类型拆分：办公资料 / 书籍 是独立页面，统计里也要能单独看到体量
-      const kinds = { goods: 0, doc: 0, book: 0 };
-      items.forEach((i) => {
-        const k = i.kind || 'goods';
-        kinds[k] = (kinds[k] || 0) + 1;
-      });
-
-      // 近 6 个月的入库趋势
-      const trend = [];
-      const base = new Date();
-      for (let m = 5; m >= 0; m--) {
-        const d = new Date(base.getFullYear(), base.getMonth() - m, 1);
-        const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-        trend.push({ name: key.slice(5) + '月', value: live(db.items).filter((i) => (i.created_at || '').startsWith(key)).length });
-      }
       return {
         total: items.length,
-        totalQty: items.reduce((s, i) => s + (Number(i.quantity) || 0), 0),
+        totalQty,
         totalValue: Math.round(totalValue * 100) / 100,
         expired: items.filter((i) => i.expiry_state === 'expired').length,
         soon: items.filter((i) => i.expiry_state === 'soon').length,
@@ -1657,6 +1919,9 @@ function createStore(userDataDir) {
       } else {
         img = {
           id,
+          // 反向索引（这张图属于哪个物品）。业务逻辑一律用 items.image_id 正查，
+          // 这一份只用于排查数据问题（比如物品没了、图还挂在目录里）。
+          // 它随同步来回走，test-server 有一条断言盯着「拉回来时没丢」。
           item_id: it.id,
           thumb,
           w: Number(p.w) || 0,
@@ -1711,16 +1976,27 @@ function createStore(userDataDir) {
     return out;
   }
 
+  /**
+   * 某个位置以及它所有下级位置的 id 集合（筛「厨房下的所有东西」时用）。
+   *
+   * 先建一次「父 → 子」映射再逐层展开。原来是 while(changed) 每轮都扫一遍全部位置，
+   * 最坏是平方级 —— 位置树又深又宽时会明显变慢。
+   */
   function subtreeIds(rootId) {
+    const childrenOf = new Map();
+    live(db.locations).forEach((l) => {
+      if (!l.parent_id) return;
+      if (!childrenOf.has(l.parent_id)) childrenOf.set(l.parent_id, []);
+      childrenOf.get(l.parent_id).push(l.id);
+    });
     const set = new Set([rootId]);
-    let changed = true;
-    while (changed) {
-      changed = false;
-      live(db.locations).forEach((l) => {
-        if (l.parent_id && set.has(l.parent_id) && !set.has(l.id)) {
-          set.add(l.id);
-          changed = true;
-        }
+    const queue = [rootId];
+    while (queue.length) {
+      const cur = queue.pop();
+      (childrenOf.get(cur) || []).forEach((id) => {
+        if (set.has(id)) return;
+        set.add(id);
+        queue.push(id);
       });
     }
     return set;
@@ -1753,6 +2029,15 @@ function createStore(userDataDir) {
       return db;
     },
     saveNow,
+
+    /**
+     * 瘦一遍库里还留着的「完整版」老墓碑。
+     *
+     * 删除时已经瘦过了，这里只针对**外来**的墓碑 —— 从服务端拉回来的可能是
+     * 老版本客户端推的完整记录。所以调用点是「同步合并之后」，而不是每次落盘：
+     * 每次落盘都全表遍历一遍，数据一大就是白花的开销。
+     */
+    compactTombstones: () => compactTombstones(db),
     reload() {
       db = load();
       return db;
@@ -1794,7 +2079,13 @@ function createStore(userDataDir) {
         else if (r.full && !writeImageFull(rec.id, r.full)) failed++;
         changed = true;
       });
-      if (changed) saveNow();
+      if (changed) {
+        // 从服务端拉回来的墓碑可能是完整版（老版本客户端推的），顺手瘦一遍。
+        // 放在这里而不是每次落盘 —— 只有外来数据会带进完整版墓碑，
+        // 每次落盘都全表遍历一遍是白花的开销（见 compactTombstones 的说明）。
+        compactTombstones(db);
+        saveNow();
+      }
       // failed 交回同步层：从 NAS 拉下来的图片存不上，用户也必须知道，
       // 不能只报「同步完成」然后留下一堆点开是空白的图。
       return { changed, failed };
@@ -1802,7 +2093,10 @@ function createStore(userDataDir) {
   };
 }
 
-module.exports = { createStore };
+// KIND_EXTRA_KEYS 一起导出，只为了让测试能断言「数据层白名单」与
+// 「渲染层表单字段」没有漂移 —— 渲染层加了字段却忘了同步白名单，
+// 那个字段会永远存不进去，而且不报错。
+module.exports = { createStore, KIND_EXTRA_KEYS };
 
 });
 
@@ -2012,6 +2306,10 @@ function createSync(store) {
       db.items = ir.merged;
       db.categories = cr.merged;
       conflicts = [].concat(lr.conflicts, ir.conflicts, cr.conflicts);
+      // 从服务端拉回来的墓碑可能是完整版（老版本客户端推的），顺手瘦一遍。
+      // 放在这里而不是每次落盘 —— 只有这条路会引入外来墓碑，
+      // 每次落盘都全表遍历一遍是白花的开销（见 store 里 compactTombstones 的说明）。
+      if (store.compactTombstones) store.compactTombstones();
       // 图片按 updated_at 后写覆盖，并把全图落到本地文件。
       // 落盘失败的张数要带回给界面：只报「同步完成」的话，用户会看到
       // 一堆点开是空白的图，却不知道是本地空间不够。

@@ -466,6 +466,107 @@ section('[9] 注入型测试代码的转义（规范 §C）');
           '         主进程 SyntaxError 崩掉，报错行号还指向无关位置。引用选择器请用「」包起来');
       }
     }
+
+    /**
+     * ⚠️ 上面那条只盯 PROBE —— 但这个文件里还有二十多处**内联**的注入模板：
+     *   win.webContents.executeJavaScript(`...`)
+     * 它们有一模一样的风险，却完全没有护栏。真踩过第二次：
+     * 在一个新加的探针注释里写了反引号（引用一条 CSS 规则），
+     * PROBE 那条检查照样 PASS，而 electron 一启动就弹 SyntaxError。
+     * 所以这里把**所有**内联模板都扫一遍。
+     */
+    const inline = [];
+    const re = /executeJavaScript\(\s*`/g;
+    let m;
+    let scanned = 0;
+    while ((m = re.exec(src))) {
+      const bodyStart = m.index + m[0].length;
+      const close = src.indexOf('`)', bodyStart);
+      if (close < 0) {
+        inline.push('第 ' + src.slice(0, bodyStart).split('\n').length + ' 行：找不到模板结束符（`)）');
+        break;
+      }
+      scanned++;
+      const body = src.slice(bodyStart, close);
+      const lines = body.split('\n');
+      const lineOf = (idx) => src.slice(0, bodyStart + idx).split('\n').length;
+      // 反引号：只要出现就一定提前结束模板，无条件报
+      [...body.matchAll(/`/g)].forEach((t) => inline.push('第 ' + lineOf(t.index) + ' 行：反引号'));
+      // ⚠️「美元符号 + 左花括号」只在**注释里**才算 bug。
+      //    模板体里合法地用插值是很正常的（例如 executeJavaScript 里传 `App.goto('…')` 的变量），
+      //    第一版把这类也报了出来 —— 2 处误报，规则本身写错了。
+      //    注释里的插值一样会被求值：变量在 Node 侧不存在就 ReferenceError，所以必须报。
+      lines.forEach((ln, i) => {
+        const t = ln.trim();
+        if (!t.startsWith('//') && !t.startsWith('*')) return;
+        if (t.includes('${')) {
+          inline.push('第 ' + (src.slice(0, bodyStart).split('\n').length + i) + ' 行：注释里的美元符号+左花括号');
+        }
+      });
+    }
+    if (scanned === 0) {
+      warnIt('扫描内联注入模板', '一处 executeJavaScript(`…`) 都没抓到，脚本可能跟不上代码结构了');
+    } else if (inline.length === 0) {
+      ok('另外 ' + scanned + ' 处内联注入模板也干净');
+    } else {
+      bad('内联注入模板里不能有裸反引号 / 插值', inline.join('\n           ') +
+        '\n         这些也是注入到浏览器执行的模板字符串，同样会提前结束 →\n' +
+        '         主进程 SyntaxError 崩掉（报错行号指向无关的注释行）。引用选择器请用「」包起来');
+    }
+  }
+}
+
+/* ==========================================================================
+ * 10. 设计令牌（规范 §二 · 设计令牌）
+ * ======================================================================== */
+section('[10] 设计令牌（规范 §二 · 设计令牌）');
+{
+  const cssRel = 'src/renderer/css/style.css';
+  const mobileCssRel = 'mobile/platform/02-mobile.css';
+  const NEED = ['--fs-xs', '--fs-sm', '--fs-md', '--fs-lg', '--fs-xl', '--fs-2xl',
+    '--sp-1', '--sp-2', '--sp-3', '--sp-4', '--sp-5'];
+  const css = read(cssRel);
+  const rootBlock = css.slice(0, css.indexOf('}'));
+  const missing = NEED.filter((k) => !new RegExp(k + '\\s*:').test(rootBlock));
+  if (missing.length === 0) {
+    ok(':root 里 ' + NEED.length + ' 个设计令牌都在');
+  } else {
+    bad('设计令牌定义齐全', '缺：' + missing.join(', ') +
+      '\n         令牌是「新样式不用再猜该写 12 还是 13」的唯一依据，缺了等于没有');
+  }
+
+  /**
+   * 硬编码字号的**棘轮**。
+   *
+   * 方案 F 的执行策略是渐进式的：新写的样式一律用 var(--fs-*)，
+   * 旧的在改到那一块时顺手换 —— 一次性重写 500 多行 CSS 风险太高。
+   * 所以这里盯的不是「必须为 0」，而是「**不许变多**」：数字只许往下走。
+   *
+   * ⚠️ 真需要新增硬编码字号时，先想清楚能不能并到最近的一档；
+   *    确有必要再调大基线，并在这里补一句为什么。
+   */
+  const FS_BASELINE = 62;   // 方案 F 落地时的存量：style.css 51 + 02-mobile.css 11
+  let hard = 0;
+  let tok = 0;
+  const offenders = [];
+  [cssRel, mobileCssRel].filter(exists).forEach((rel) => {
+    const src = read(rel);
+    tok += (src.match(/font-size:\s*var\(--fs-/g) || []).length;
+    src.split(/\r?\n/).forEach((line, i) => {
+      const m = line.match(/font-size:\s*([^;]+);/);
+      if (!m) return;
+      const val = m[1].trim();
+      if (/^[\d.]+px$/.test(val)) offenders.push(rel + ':' + (i + 1) + '  font-size: ' + val);
+    });
+  });
+  hard = offenders.length;
+  if (hard <= FS_BASELINE) {
+    ok('硬编码字号没有变多（' + hard + ' / 基线 ' + FS_BASELINE + '，已改用令牌 ' + tok + ' 处）');
+  } else {
+    bad('新增样式要用字号令牌', '硬编码字号 ' + hard + ' 处，超过基线 ' + FS_BASELINE + '：\n           ' +
+      offenders.slice(FS_BASELINE).join('\n           ') +
+      '\n         新样式请用 var(--fs-xs / sm / md / lg / xl / 2xl)；' +
+      '\n         确有必要再调大 FS_BASELINE，并在注释里说明原因');
   }
 }
 

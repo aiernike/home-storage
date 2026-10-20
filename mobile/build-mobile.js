@@ -244,8 +244,17 @@ BUILD_SOURCES.forEach(([rel, abs]) => {
   sources[rel] = hash(read(abs, rel));
 });
 
+/*
+ * ⚠️ 这份文件里**刻意不放构建时间戳**。
+ *
+ * 原先有一个 generated_at 字段，后果是：哪怕源码一字未改，每次构建都会产生一份
+ * 只差时间的 build-info.json —— git 里全是无意义 diff，`npm run deploy:diff`
+ * 也永远提示「要传 build-info.json」，真正该传的那几个文件反而被淹掉。
+ *
+ * 去掉之后它只由源码哈希决定：源码没动，重建出来的文件就一模一样，
+ * 「本地和线上一致」才真正等价于「线上是这份源码构建的」。
+ */
 const info = {
-  generated_at: new Date().toISOString().replace('T', ' ').slice(0, 19),
   sources,
   bundle_bytes: Buffer.byteLength(bundle, 'utf8')
 };

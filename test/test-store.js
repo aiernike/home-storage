@@ -5,7 +5,7 @@ const os = require('os');
 const fs = require('fs');
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'hs-test-'));
-const { createStore } = require(path.join(__dirname, '..', 'src', 'main', 'store.js'));
+const { createStore, KIND_EXTRA_KEYS } = require(path.join(__dirname, '..', 'src', 'main', 'store.js'));
 
 let pass = 0, fail = 0;
 function ok(name, cond, extra) {
@@ -68,10 +68,16 @@ function ok(name, cond, extra) {
   ok('位置路径正确', subRow.path === '阳台柜 / 第三层', 'got ' + subRow.path);
 
   console.log('\n[3] 循环引用防护');
+  // 改层级走的是 locations.save（曾经那个 locations.move 与它完全重复，已删）。
+  // 界面上的入口是「位置管理 → 编辑」里的「上级位置」下拉，提交的正是这条路径。
   let blocked = false;
-  try { await call('locations.move', { id: newLoc.id, parent_id: sub.id }); }
+  try { await call('locations.save', { id: newLoc.id, parent_id: sub.id }); }
   catch (e) { blocked = true; }
-  ok('阻止移动到自己的下级', blocked);
+  ok('阻止把位置挪到自己的下级', blocked);
+  // 正向：合法的改层级要真的生效，否则上面那条「拦住了」可能只是被别的原因拦下
+  const movedLoc = await call('locations.save', { id: sub.id, parent_id: null });
+  ok('合法的改层级生效', movedLoc.parent_id === null, String(movedLoc.parent_id));
+  await call('locations.save', { id: sub.id, parent_id: newLoc.id });
 
   console.log('\n[4] 物品增删改查');
   const milk = await call('items.save', {
@@ -81,6 +87,42 @@ function ok(name, cond, extra) {
   });
   ok('新增物品成功', !!milk.id);
   ok('排序码第一位正确', milk.barcode === '6901234567892');
+
+  // ---- 局部更新：只传什么就只改什么 ----
+  // 数据层必须区分「没传这个字段」和「传了空值」。以前 category_id/location_id/
+  // quantity/unit/tags/日期/备注 是「没传就重置成默认值」，而界面恰好总是全量提交，
+  // 所以没暴露。一旦有人写「只改名字」的入口（批量改分类、扫码先建再回填名称），
+  // 物品的位置和分类就会被静默清空，界面还提示「已保存」。
+  console.log('\n[4b] 局部更新只改传进来的字段');
+  const patchTarget = await call('items.save', {
+    name: '局部更新用', barcodes: ['6901234500001'], code: 'HS-2099-9001',
+    category_id: cats[1].id, location_id: fridge.children[0].id,
+    quantity: 7, unit: '瓶', note: '原来的备注', tags: ['A', 'B'],
+    production_date: '2026-08-01', expiry_date: '2026-12-31', price: 9.9
+  });
+  const patched = await call('items.save', { id: patchTarget.id, name: '改过名字' });
+  ok('局部更新只改名字', patched.name === '改过名字');
+  ok('局部更新不动位置', patched.location_id === fridge.children[0].id, 'got ' + patched.location_id);
+  ok('局部更新不动分类', patched.category_id === cats[1].id, 'got ' + patched.category_id);
+  ok('局部更新不动数量与单位',
+    patched.quantity === 7 && patched.unit === '瓶', `got ${patched.quantity} / ${patched.unit}`);
+  ok('局部更新不动备注与标签',
+    patched.note === '原来的备注' && (patched.tags || []).join(',') === 'A,B',
+    `note=${patched.note} tags=${JSON.stringify(patched.tags)}`);
+  ok('局部更新不动条码与内部编码',
+    (patched.barcodes || []).indexOf('6901234500001') >= 0 && patched.code === 'HS-2099-9001',
+    `barcodes=${JSON.stringify(patched.barcodes)} code=${patched.code}`);
+  ok('局部更新不动日期与价格',
+    patched.production_date === '2026-08-01' && patched.expiry_date === '2026-12-31' && patched.price === 9.9,
+    `${patched.production_date} / ${patched.expiry_date} / ${patched.price}`);
+
+  // 反过来：明确传了空值就得真的清掉。不能图省事一律「忽略空值」——
+  // 那样用户把位置清空再保存，位置还留着，同样是个 bug。
+  const cleared = await call('items.save', { id: patchTarget.id, location_id: null, note: '', tags: [] });
+  ok('明确传 null 能清空位置', cleared.location_id === null, 'got ' + cleared.location_id);
+  ok('明确传空串能清空备注', cleared.note === '', 'got ' + JSON.stringify(cleared.note));
+  ok('明确传空数组能清空标签', (cleared.tags || []).length === 0, 'got ' + JSON.stringify(cleared.tags));
+  ok('清空位置的同一次更新里，没提的分类不受影响', cleared.category_id === cats[1].id, 'got ' + cleared.category_id);
 
   console.log('\n[5] 条码唯一性');
   let dupBlocked = false;
@@ -192,6 +234,47 @@ function ok(name, cond, extra) {
   ok('导入后物品数一致', imported.length === all.length, `${imported.length} vs ${all.length}`);
   const importedFound = await store3.handle('items.byBarcode', { barcode: '6901234567892' });
   ok('导入后位置关联完好', importedFound && importedFound.location_path.includes('冷藏室'), 'got ' + (importedFound && importedFound.location_path));
+
+  // ---- 同步令牌绝不能进备份文件 ----
+  // 令牌是 90 天有效的 JWT，拿着它就能读写这个账号在 NAS 上的全部数据。
+  // 而「导出备份」恰恰是被界面鼓励的操作（图片存不下时的提示就写着「请先导出备份」），
+  // 备份又常被发到家庭群 / 传网盘 / 发给技术支持 —— 令牌跟着走 = 把 NAS 钥匙一起送人。
+  await call('app.settings.set', { syncUrl: 'http://nas.local:8080', syncUser: 'taoge', syncToken: 'secret-token-abc' });
+  const dumpTok = await call('app.export');
+  ok('导出不含同步令牌', !dumpTok.settings.syncToken, 'got ' + JSON.stringify(dumpTok.settings.syncToken));
+  // 其他同步设置要照常导出，否则用户换台机器就得重新回忆地址和账号
+  ok('导出仍含同步地址与账号',
+    dumpTok.settings.syncUrl === 'http://nas.local:8080' && dumpTok.settings.syncUser === 'taoge');
+
+  // 导入一份「带令牌」的备份。备份文件就是普通 JSON，谁都能手工改 ——
+  // 塞个别人的令牌进来，本机下次同步就会把自己的数据推到别人账号里，
+  // 界面上还只显示「同步完成」。所以导入必须无视备份里的令牌。
+  const tmpTok = fs.mkdtempSync(path.join(os.tmpdir(), 'hs-test-tok-'));
+  const storeTok = createStore(tmpTok);
+  await storeTok.handle('app.settings.set', { syncToken: 'my-own-token' });
+  await storeTok.handle('app.import', {
+    data: Object.assign({}, dumpTok, {
+      settings: Object.assign({}, dumpTok.settings, { syncToken: 'someone-else-token' })
+    }),
+    mode: 'replace'
+  });
+  const tokAfter = await storeTok.handle('app.settings.get');
+  ok('导入不会用备份里的令牌覆盖本机', tokAfter.syncToken === 'my-own-token', 'got ' + tokAfter.syncToken);
+  // 别把孩子跟洗澡水一起倒了：备份里其他设置要正常生效
+  ok('导入时备份里的其他设置照常生效', tokAfter.syncUrl === 'http://nas.local:8080', 'got ' + tokAfter.syncUrl);
+
+  // 导出 → 导回本机，登录状态不该丢。这正是「导出时删键」而不是「置空」的原因：
+  // 置空的话 Object.assign 会把本机的令牌清掉，用户每次恢复备份都要重新登录。
+  const tmpTok2 = fs.mkdtempSync(path.join(os.tmpdir(), 'hs-test-tok2-'));
+  const storeTok2 = createStore(tmpTok2);
+  await storeTok2.handle('app.settings.set', { syncToken: 'keep-me' });
+  const ownDump = await storeTok2.handle('app.export');
+  await storeTok2.handle('app.import', { data: ownDump, mode: 'replace' });
+  ok('把自己的备份导回来，登录状态还在',
+    (await storeTok2.handle('app.settings.get')).syncToken === 'keep-me');
+
+  // 收尾：把上面为了测令牌而改的设置还原，别影响后面的用例
+  await call('app.settings.set', { syncUrl: '', syncUser: '', syncToken: '' });
 
   console.log('\n[15] 汇总接口');
   const sum = await call('app.summary');
@@ -779,17 +862,19 @@ function ok(name, cond, extra) {
 
   const tmpRes = fs.mkdtempSync(path.join(os.tmpdir(), 'hs-restore-'));
   const storeRes = createStore(tmpRes);
-  // 本机那份：名称、备注、extra 全带上，才能证明是「整份覆盖」而不是只改了名字
+  // 本机那份：名称、备注、extra 全带上，才能证明是「整份覆盖」而不是只改了名字。
+  // ⚠️ extra 的字段名必须在数据层白名单里（KIND_EXTRA_KEYS），否则 items.save
+  // 会把它过滤掉 —— 普通物品（goods）本来就没有专属字段，所以这里用资料类来验。
   const itmRes = await storeRes.handle('items.save', {
-    name: '酱油（本机改的）', kind: 'goods', note: '本机加的备注',
-    extra: { brand: '本机品牌' }, quantity: 3
+    name: '酱油（本机改的）', kind: 'doc', note: '本机加的备注',
+    extra: { doc_no: '本机文号' }, quantity: 3
   });
   // 远端那份更新（时间戳往后挪一分钟，模拟 NAS 上的版本胜出）
   // extra 里塞一个「只有 NAS 有」的字段：整份覆盖之后它必须消失，
   // 不然「覆盖」就退化成增量合并了（用户的旧字段会赖着不走）
   const remoteWin = {
-    id: itmRes.id, name: '酱油（NAS 改的）', kind: 'goods', note: 'NAS 加的备注',
-    extra: { brand: 'NAS 品牌', nasOnly: '只存在于 NAS' }, quantity: 9, barcodes: [],
+    id: itmRes.id, name: '酱油（NAS 改的）', kind: 'doc', note: 'NAS 加的备注',
+    extra: { doc_no: 'NAS 文号', org: '只存在于 NAS' }, quantity: 9, barcodes: [],
     updated_at: new Date(Date.now() + 60000).toISOString(), deleted: false
   };
   // 快照一份：merge 之后这个对象会变成库里的正本，覆盖动作是就地改写它的，
@@ -817,7 +902,7 @@ function ok(name, cond, extra) {
     afterRes.name === '酱油（本机改的）' && afterRes.note === '本机加的备注' &&
       afterRes.quantity === 3, JSON.stringify({ n: afterRes.name, note: afterRes.note, q: afterRes.quantity }));
   ok('[15c] 覆盖是整份替换，extra 不会两边混着（NAS 独有的字段必须消失）',
-    afterRes.extra && afterRes.extra.brand === '本机品牌' && !('nasOnly' in afterRes.extra),
+    afterRes.extra && afterRes.extra.doc_no === '本机文号' && !('org' in afterRes.extra),
     JSON.stringify(afterRes.extra));
   ok('[15c] 名字不带「（冲突副本）」后缀（否则下次同步会把这个后缀发给所有设备）',
     afterRes.name.indexOf('冲突副本') < 0, afterRes.name);
@@ -1019,7 +1104,17 @@ function ok(name, cond, extra) {
   await new Promise((r) => setTimeout(r, 300));
   await storeDmg.handle('items.save', { name: '第二件重要物品' });
   await new Promise((r) => setTimeout(r, 300));
-  ok('每次落盘都会留一份 .bak', fs.existsSync(dmgBak));
+  ok('落盘后会留一份 .bak', fs.existsSync(dmgBak));
+
+  // .bak 的语义是「回到这次会话开始前的样子」，所以本次会话只做一次。
+  // 每次落盘都 copyFileSync 整个数据文件的话，数据一大就等于每秒重复复制几十 MB，
+  // 而且会把 .bak 的语义冲淡成「上一次按键前的样子」。
+  const bakMtime = fs.statSync(dmgBak).mtimeMs;
+  await storeDmg.handle('items.save', { name: '再存一条用来验证备份不再重做' });
+  await new Promise((r) => setTimeout(r, 300));
+  ok('后续落盘不会反复重写 .bak（省掉整份文件复制）',
+    fs.statSync(dmgBak).mtimeMs === bakMtime,
+    fs.statSync(dmgBak).mtimeMs + ' vs ' + bakMtime);
 
   fs.writeFileSync(dmgMain, '{"items":[{"id":"x"', 'utf8');
   const storeDmg2 = createStore(tmpDmg);
@@ -1362,7 +1457,8 @@ function ok(name, cond, extra) {
     tombMerge.merged.length === 1 && tombMerge.merged[0].deleted === true,
     JSON.stringify(tombMerge.merged));
 
-  // 落盘时的兜底：从服务端拉回来的「完整版」墓碑也要被清掉
+  // 从服务端拉回来的「完整版」墓碑，在应用落地时就要被清掉
+  // （不是等落盘 —— 每次落盘都全表遍历一遍是白花的开销）
   const tmpFlush = fs.mkdtempSync(path.join(os.tmpdir(), 'hs-flushtomb-'));
   const storeFlush = createStore(tmpFlush);
   await storeFlush.handle('items.save', { name: '活着的物品' });
@@ -1374,7 +1470,7 @@ function ok(name, cond, extra) {
   ]);
   await new Promise((r) => setTimeout(r, 300));
   const imgTomb = (await storeFlush.handle('app.export')).images.find((x) => x.id === 'img-old-tomb');
-  ok('同步拉来的完整版墓碑，落盘时也被瘦身',
+  ok('同步拉来的完整版墓碑，应用时就瘦身',
     !!imgTomb && Object.keys(imgTomb).length <= 5,
     imgTomb ? Object.keys(imgTomb).join(',') : '');
 
@@ -1471,12 +1567,11 @@ function ok(name, cond, extra) {
   ok('老库的数据也还在', (await storeOldSet.handle('items.list')).some((i) => i.name === '老物品'), '');
   try { fs.rmSync(tmpOldSet, { recursive: true, force: true }); } catch (e) {}
 
-  /* ---- [23] 分类的增改、物品的批量归位 ----
+  /* ---- [23] 分类的增改删、物品的批量归位 ----
    *
-   * 这两个 action 目前在界面里没有入口（分类只用来筛选，改物品位置走的是 items.save），
-   * 但它们是 store 的公开接口：渲染层能 window.api.call 直接调，桌面端还要过 IPC。
-   * 一条测试都不盯的话，以后真接上界面时踩了坑都不知道 —— 而且 store 是唯一数据入口，
-   * 「没人调」不等于「可以坏」。
+   * 界面上分别对应「设置 → 管理分类」和「物品清单 → 批量整理」。
+   * 这里仍然直接测 store 接口本身：store 是唯一数据入口，渲染层只是它的一层皮，
+   * 而且桌面端还要过 IPC —— 接口自己坏了，界面上的入口修得再漂亮也没用。
    */
   console.log('\n[23] 分类增改与物品批量归位');
 
@@ -1506,6 +1601,36 @@ function ok(name, cond, extra) {
   ok('报错时没有偷偷多出一条',
     (await call('categories.list')).filter((c) => c.name === '幽灵分类').length === 0, '');
 
+  // 分类属于哪个栏目是靠 key 认的（渲染层 U.catKindOf 按「栏目:」前缀解析）。
+  // 新建时不把栏目写进 key 的话，用户自建的「会计凭证」就只会出现在物品页的分类下拉里，
+  // 在办公资料页怎么都找不到 —— 而这类自定义分类恰恰是资料页最需要的。
+  const docCat = await call('categories.save', { name: '会计凭证', kind: 'doc' });
+  ok('新建分类会把栏目写进 key', /^doc:/.test(docCat.key || ''), JSON.stringify(docCat.key));
+  const bookCat = await call('categories.save', { name: '绘本', kind: 'book' });
+  ok('图书栏目的分类 key 前缀是 book', /^book:/.test(bookCat.key || ''), JSON.stringify(bookCat.key));
+  const noKindCat = await call('categories.save', { name: '没传栏目' });
+  ok('不传栏目时按物品处理', /^goods:/.test(noKindCat.key || ''), JSON.stringify(noKindCat.key));
+
+  // 空名：名称是分类唯一的可见标识，存成空的会在筛选条上留一个点不出任何东西的空白 chip
+  let emptyErr = '';
+  try { await call('categories.save', { name: '   ' }); } catch (e) { emptyErr = e.message; }
+  ok('新建分类时空名会被拒绝', /名称/.test(emptyErr), emptyErr || '(居然没报错)');
+  let emptyRenameErr = '';
+  try { await call('categories.save', { id: newCat.id, name: '  ' }); } catch (e) { emptyRenameErr = e.message; }
+  ok('改名成空会被拒绝', /名称/.test(emptyRenameErr), emptyRenameErr || '(居然没报错)');
+  ok('被拒之后分类名没被改坏',
+    (await call('categories.list')).some((c) => c.id === newCat.id && c.name === '露营与户外'), '');
+
+  // 删除分类：分类本身消失，但归在它下面的记录不能被一起删掉，只变成「未分类」
+  const doomed = await call('categories.save', { name: '临时分类' });
+  const doomedItem = await call('items.save', { name: '待分类物品', category_id: doomed.id });
+  await call('categories.delete', { id: doomed.id });
+  ok('删除后分类不再出现在 list 里',
+    !(await call('categories.list')).some((c) => c.id === doomed.id), '');
+  const orphan = await call('items.get', { id: doomedItem.id });
+  ok('原来归在这个分类下的物品还在（只是变成未分类）',
+    !!orphan && !orphan.category_id, JSON.stringify(orphan && orphan.category_id));
+
   // 批量归位
   const boxA = await call('locations.save', { name: '露营箱A', parent_id: null });
   const boxB = await call('locations.save', { name: '露营箱B', parent_id: null });
@@ -1533,6 +1658,113 @@ function ok(name, cond, extra) {
   ok('items.move 跳过不存在的 id（count 只算真挪动的）', ghostMove.count === 1, String(ghostMove.count));
   ok('真挪动的那件确实回去了',
     (await call('items.get', { id: tent.id })).location_id === boxA.id, '');
+
+  console.log('\n[24] extra 字段白名单（拼错的字段名不能静默存进去）');
+  // extra 是自由对象：字段名拼错（author → auther）以前不报错、存进库、
+  // 界面永远不显示、导出 CSV 那一列也是空的，还跟着同步传到所有设备。
+  // 用户只会觉得「我明明填了作者，怎么没有」，系统一句提示都没有。
+  const goodsExtra = await call('items.save', { name: '带错字段的物品', extra: { author: '不该在这儿' } });
+  ok('物品不收资料/图书的专属字段', !(goodsExtra.extra || {}).author,
+    JSON.stringify(goodsExtra.extra));
+
+  const docExtra = await call('items.save', {
+    name: '白名单测试资料', kind: 'doc', extra: { doc_no: 'X-1', auther: '拼错的作者' }
+  });
+  ok('资料保留白名单内的字段', docExtra.extra && docExtra.extra.doc_no === 'X-1',
+    JSON.stringify(docExtra.extra));
+  ok('资料丢弃拼错的字段名', !docExtra.extra.auther, JSON.stringify(docExtra.extra));
+
+  const bookExtra = await call('items.save', {
+    name: '白名单测试图书', kind: 'book', extra: { author: '张三', doc_no: '不该在这儿' }
+  });
+  ok('图书只收图书的字段', bookExtra.extra.author === '张三' && !bookExtra.extra.doc_no,
+    JSON.stringify(bookExtra.extra));
+
+  // 更新时同样过滤，而且不能把原有的合法字段冲掉
+  const bookUpd = await call('items.save', {
+    id: bookExtra.id, extra: { publisher: '人民邮电', year: '2020' }
+  });
+  ok('更新时保留原字段并过滤新字段',
+    bookUpd.extra.author === '张三' && bookUpd.extra.publisher === '人民邮电' && !bookUpd.extra.year,
+    JSON.stringify(bookUpd.extra));
+
+  // ⚠️ 白名单必须和渲染层表单字段一一对应。渲染层加了字段却忘了同步白名单，
+  // 那个字段会**永远存不进去**且不报错 —— 用户填了白填，而且很难查。
+  // 两个方向都要盯：渲染层有的白名单得有；白名单有的渲染层得还在（别留僵尸字段）。
+  const appSrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'renderer', 'js', 'app.js'), 'utf8');
+  const uiKeys = new Set();
+  appSrc.replace(/x_([a-z_0-9]+)/g, (m, k) => { uiKeys.add(k); return m; });
+  const allowAll = new Set(Object.keys(KIND_EXTRA_KEYS).reduce((a, k) => a.concat(KIND_EXTRA_KEYS[k]), []));
+  const missingInStore = [...uiKeys].filter((k) => !allowAll.has(k));
+  ok('渲染层的每个 x_ 字段都在数据层白名单里', missingInStore.length === 0,
+    '漏了：' + missingInStore.join(','));
+  const zombies = [...allowAll].filter((k) => !uiKeys.has(k));
+  ok('白名单里没有渲染层已不存在的僵尸字段', zombies.length === 0, '多余：' + zombies.join(','));
+
+  console.log('\n[25] 消耗日志不会无限增长');
+  // 常用的东西（比如每天消耗的食品）一年能攒 365 条日志，而 logs 会跟着物品
+  // 同步到所有设备、也不会被墓碑瘦身 —— 不设上限就是白白占带宽和体积。
+  const logItem = await call('items.save', { name: '每天都吃的', quantity: 0 });
+  for (let i = 0; i < 60; i++) await call('items.consume', { id: logItem.id, delta: 1 });
+  const logAfter = await call('items.get', { id: logItem.id });
+  ok('消耗日志被限制在最近 50 条', (logAfter.logs || []).length === 50,
+    'got ' + (logAfter.logs || []).length);
+  ok('截断掉的是最老的，最新的还在',
+    logAfter.logs[logAfter.logs.length - 1].delta === 1, JSON.stringify(logAfter.logs.slice(-1)));
+  ok('截断日志不影响数量累计', logAfter.quantity === 60, 'got ' + logAfter.quantity);
+
+  console.log('\n[26] 更新版本的数据文件不能被静默降级');
+  // 场景：用户先用新版打开过、又用旧版打开。不能按老结构去迁移（新字段会被丢掉），
+  // 也不能抛异常 —— load() 会把异常当成「文件损坏」，拿备份覆盖、甚至开空库。
+  const tmpV3 = fs.mkdtempSync(path.join(os.tmpdir(), 'hs-v3-'));
+  fs.mkdirSync(path.join(tmpV3, 'data'), { recursive: true });
+  fs.writeFileSync(path.join(tmpV3, 'data', 'storage.json'), JSON.stringify({
+    schema: 3,
+    locations: [],
+    items: [{
+      id: 'future-1', name: '未来版本的物品', kind: 'goods', quantity: 1,
+      updated_at: '2026-10-01T00:00:00.000Z', deleted: false,
+      futureField: '新版本才有的字段'
+    }],
+    categories: [], images: [], settings: {}, meta: { createdAt: '2026-10-01T00:00:00.000Z' }
+  }), 'utf8');
+  const storeV3 = createStore(tmpV3);
+  const listV3 = await storeV3.handle('items.list');
+  ok('打开更新版本的数据文件不崩', Array.isArray(listV3) && listV3.length === 1,
+    JSON.stringify(listV3.map((i) => i.name)));
+  ok('不会把 schema 降级成本程序认识的版本', storeV3.raw.schema === 3,
+    'got ' + storeV3.raw.schema);
+  ok('更新版本才有的字段没被丢掉', (listV3[0] || {}).futureField === '新版本才有的字段',
+    JSON.stringify(listV3[0]));
+  try { fs.rmSync(tmpV3, { recursive: true, force: true }); } catch (e) {}
+
+  console.log('\n[27] 先筛后装饰：筛出来的记录装饰字段仍然完整');
+  // 筛选挪到装饰之前（省掉给全库白算一遍位置路径/分类/图片的开销），
+  // 但不能因此少装饰 —— 命中项的位置路径、分类名必须还在，
+  // 否则列表上那一行会缺东西，而且这种缺失不会报错。
+  const fLoc = await call('locations.save', { name: '筛选探针位置', parent_id: null });
+  const fCat = await call('categories.save', { name: '筛选探针分类', kind: 'goods' });
+  const fItem = await call('items.save', {
+    name: '筛选探针物品', location_id: fLoc.id, category_id: fCat.id
+  });
+  const byPath = await call('items.list', { keyword: '筛选探针位置' });
+  ok('搜索能命中「位置路径」上的字（说明筛选阶段就查了位置表）',
+    byPath.some((i) => i.id === fItem.id), JSON.stringify(byPath.map((i) => i.name)));
+  ok('命中项的位置路径已装饰完整',
+    byPath.filter((i) => i.id === fItem.id).every((i) => i.location_path === '筛选探针位置'),
+    JSON.stringify(byPath.map((i) => i.location_path)));
+  const byCatName = await call('items.list', { keyword: '筛选探针分类' });
+  ok('搜索能命中「分类名」上的字',
+    byCatName.some((i) => i.id === fItem.id), JSON.stringify(byCatName.map((i) => i.name)));
+  ok('命中项的分类名已装饰出来',
+    byCatName.filter((i) => i.id === fItem.id).every((i) => i.category_name === '筛选探针分类'),
+    JSON.stringify(byCatName.map((i) => i.category_name)));
+  // 保质期筛选也一样：状态是在装饰之前算的，不能因此判错
+  await call('items.save', { id: fItem.id, expiry_date: '2020-01-01' });
+  const byExpired = await call('items.list', { expiry: 'expired' });
+  ok('保质期筛选仍然准确（状态在装饰之前就算出来了）',
+    byExpired.some((i) => i.id === fItem.id) && byExpired.every((i) => i.expiry_state === 'expired'),
+    JSON.stringify(byExpired.map((i) => i.expiry_state)));
 
   console.log('\n========================================');
   console.log(`  通过 ${pass} 项，失败 ${fail} 项`);

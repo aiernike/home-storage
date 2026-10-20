@@ -16,8 +16,9 @@
  *
  * ⚠️ 它只回答「哪些文件不一样」，**不回答「本地是不是最新构建」**。
  * 两边都旧的时候它一样会显示「全部一致」—— 那是假阳性。
- * 要确认本地是最新的，得重建一次产物再比：只有 `build-info.json`（时间戳）会变，
- * 其余文件哈希一字不变，才说明本地产物本来就是最新的。
+ * 要确认本地是最新的，先跑一次 `npm run build:mobile-assets` 再比：
+ * `build-info.json` 里记的是各源文件的哈希，源码没改它就一字不变；
+ * 它变了就说明源码改过，线上那份是旧的。
  */
 const fs = require('fs');
 const path = require('path');
@@ -110,8 +111,8 @@ function walk(dir, base, out) {
     console.log('\n把这 ' + diff.length + ' 个文件覆盖到 NAS 的 public 目录即可（其余不用动）。');
   } else {
     console.log('\n线上已经是最新的。');
-    console.log('（注意：这只说明两边一样。要确认「本地是最新构建」，得重建产物再比一次 ——');
-    console.log('  只有 build-info.json 变、其余哈希不变，才算数。）');
+    console.log('（注意：这只说明两边一样。要确认「本地是最新构建」，先跑一次');
+    console.log('  npm run build:mobile-assets 再比：build-info.json 若变了，说明源码改过。）');
   }
 })().catch((e) => {
   console.error('出错：' + e.message);

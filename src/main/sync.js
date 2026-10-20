@@ -202,6 +202,10 @@ function createSync(store) {
       db.items = ir.merged;
       db.categories = cr.merged;
       conflicts = [].concat(lr.conflicts, ir.conflicts, cr.conflicts);
+      // 从服务端拉回来的墓碑可能是完整版（老版本客户端推的），顺手瘦一遍。
+      // 放在这里而不是每次落盘 —— 只有这条路会引入外来墓碑，
+      // 每次落盘都全表遍历一遍是白花的开销（见 store 里 compactTombstones 的说明）。
+      if (store.compactTombstones) store.compactTombstones();
       // 图片按 updated_at 后写覆盖，并把全图落到本地文件。
       // 落盘失败的张数要带回给界面：只报「同步完成」的话，用户会看到
       // 一堆点开是空白的图，却不知道是本地空间不够。
