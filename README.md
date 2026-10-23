@@ -1,203 +1,215 @@
-# 家庭收纳
+# Home Storage
 
-**简体中文** | [English](README.en.md)
+[简体中文](README.zh-CN.md) | **English**
 
-一个给自己家里用的收纳管理软件。记录东西放在哪、扫条码快速录入、盯着保质期别让食品和药品过期——**家里的实物、办公资料、书籍**都能管，数据同步到自己的 NAS 上，**电脑和安卓手机共用一份**。
+A household inventory app built for real homes. It remembers where things are, lets you scan a barcode to add something in seconds, and keeps an eye on expiry dates so food and medicine don't quietly go bad. It handles **physical goods, office documents, and books** — and syncs to your own NAS so your desktop and Android phone share one library.
 
-支持三端：
+Three clients, one codebase:
 
-| 端 | 怎么装 | 说明 |
+| Client | How to install | Notes |
 |---|---|---|
-| Windows | [Windows11使用指南.md](Windows11使用指南.md) | 桌面应用，打包成 exe 安装程序 |
-| 安卓手机 | [安卓手机使用指南.md](安卓手机使用指南.md) | 打包成 APK 安装 |
-| NAS 后端 | [群晖部署指南.md](群晖部署指南.md) | 同步服务，可选，不开也能单机用 |
+| Windows | [Windows11使用指南.md](Windows11使用指南.md) *(Chinese)* | Desktop app, packaged as an NSIS installer |
+| Android | [安卓手机使用指南.md](安卓手机使用指南.md) *(Chinese)* | Packaged as a signed APK |
+| NAS backend | [群晖部署指南.md](群晖部署指南.md) *(Chinese)* | Optional sync server; works fully offline without it |
 
-## 功能
+## Features
 
-**三类东西，同一套逻辑**
-软件管的是三种东西，界面上分三个栏目，但共用同一张表、同一套同步/搜索/统计/图片：
+### Three record types, one schema
 
-| 栏目 | 管什么 | 每条记录关心 |
+The app manages three kinds of things, shown as three tabs but backed by the **same table** and the same sync / search / stats / image pipeline:
+
+| Tab | What it holds | Per-record fields |
 |---|---|---|
-| 物品清单 | 家里的实物 | 数量、保质期、条码 |
-| 办公资料 | 文件、合同、票据、会计凭证 | 文件名称、类别、文件编号、年度、来文单位、金额、保管期限 |
-| 图书 | 书、教材、杂志 | 书名、作者、出版社、出版年、ISBN、阅读状态 |
+| Goods | Physical items at home | Quantity, expiry date, barcode |
+| Documents | Files, contracts, receipts, accounting vouchers | Title, category, document number, year, issuer, amount, retention period |
+| Books | Books, textbooks, magazines | Title, author, publisher, publication year, ISBN, reading status |
 
-分成三类是因为它们关心的字段完全不同：一袋米的「保质期」和一份合同的「保管期限」不是一回事，一本杂志也没有「数量」可言。
+They are separate because they care about different things: the "expiry date" of a bag of rice is not the "retention period" of a contract, and a magazine has no meaningful "quantity".
 
-**收纳位置**
-位置按「房间 → 柜子 → 层/格子」组织，层级不限。预置了一套常见的家庭结构（厨房/冰箱/储藏室……），可以随意增删改。按位置筛选时会自动包含所有下级位置——点「冰箱」就能看到冷藏室和冷冻室里所有东西。
+### Storage locations
 
-**物品图标**
-没拍照的东西在列表里会显示一个图标，一眼能看出是什么。内置 80 多个手绘图标，分 9 组（食品、日用、医药、办公、图书、数码、工具、衣物、其他），**纯矢量、不联网、不占空间**。
+Locations are organized as **Room → Cabinet → Shelf / Compartment**, with unlimited nesting. A sensible home structure is preloaded (kitchen, fridge, pantry, …) and can be freely added to, renamed, or deleted. Filtering by a location automatically includes every descendant — tap "Fridge" and you see everything in both the chiller and the freezer.
 
-图标三级兜底：你手动选的 > 该分类的默认图标（比如「记账」分类默认给凭证图标）> 该栏目的兜底图标（资料给文件、图书给书）。所以不挑也能看，挑了更贴切。
+### Item icons
 
-**条码录入**
-四种方式随便挑：
-- 摄像头扫码（识别库随软件一起发布，不依赖系统或第三方服务）
-- 图片识别（拍好的照片直接读）
-- 手动输入
-- 扫码枪（配个前缀的话，在任何页面直接扫就行）
+Anything without a photo gets an icon in the list, so you can tell at a glance what it is. **82 hand-drawn icons in 9 groups** (food, household, medicine, office, books, digital, tools, clothing, other) — pure vectors, fully offline, no disk cost.
 
-**扫码枪建议配一个前缀。** 扫码枪在电脑眼里就是个键盘，不配置的话它会照着光标把条码「打」进当前输入框——你正在填「物品名称」，扫一下名字就变成一串数字。
+Icons resolve in three levels: your explicit choice → the category's default icon (e.g. the "Accounting" category defaults to a voucher icon) → the tab's fallback (a document for Documents, a book for Books). So you don't have to pick one, but picking one is more precise.
 
-到「设置 → 扫码枪」填一个字符（比如 `$`），再到扫码枪的说明书里把它的**前缀**也设成同一个字符。之后在**任何页面**扫一下都能直接打开或新建记录，不用先切到扫码页，条码也不会漏进你正在填的表单，扫过的记录会进扫码页的日志并标着来源「扫码枪」。代价是输入框里打不出 `$` 了（会被当成前缀）；不用扫码枪就留空，随时能关。
+### Barcode input
 
-扫码时对焦拉满（1920×1080 + 连续对焦），支持开手电筒，暗处或反光的条码也能扫。一个物品可以绑多个条码，同款不同包装不会打架。条码唯一性有校验，重复录入会被拦下来并告诉你已经属于哪件物品。输入的条码会实时检查校验位，EAN-13 之类填错了会提示。
+Four ways, pick whichever fits:
 
-**扫到书和杂志会自动认出来**
-扫书背面的 ISBN（978 / 979 开头）或杂志封面的期刊条码（977 开头）时，软件会问一句「按图书录入吗」，确认后直接以图书的形式打开表单，条码已经填好，不用自己判断「这算不算物品」。ISBN 的校验位提示说的是「ISBN」，不会报成「EAN-13」。
+- **Camera scan** — the recognition library ships with the app, no system or third-party service involved
+- **From a photo** — read a barcode out of an existing picture
+- **Manual entry**
+- **Hardware scanner** — with a prefix configured, you can scan from any screen
 
-**内部编码（没有条码的东西）**
-酱油瓶有条码，但你那份租房合同、那盒自己分装的花椒没有。这类东西保存时会**自动发一个内部编码**，形如 `HS-2026-0001`（前缀-年份-流水号，按年递增，删掉的号不会被重复使用）。
+**Configure a prefix if you use a scanner.** To a PC, a barcode scanner is just a keyboard: without a prefix it types the barcode into whatever field currently has focus — you're filling in "Item name", you scan, and the name becomes a string of digits.
 
-- 编码会印在二维码标签上，打印出来贴上去，二维码磨花了还能照着编码手输
-- 在扫码页输入或扫到 `HS-` 开头的编码，**直接打开对应的那条记录**，不会新建
-- 查不到时会问一句要不要用这个号新建，不会默默丢一条空记录
-- 编码也参与搜索，搜 `HS-2026-0001` 能搜到
+Go to **Settings → Scanner**, enter a character (e.g. `$`), then set the scanner's own **prefix** to the same character. After that, scanning on **any screen** opens or creates the matching record directly, no need to switch to the scan tab, and the barcode never leaks into the form you were filling in. Scanned records appear in the scan log tagged with the source "Scanner". The trade-off: you can no longer type `$` in an input field (it is treated as the prefix). Leave it empty if you don't use a scanner; it can be turned off at any time.
 
-**二维码（给位置和物品做标签）**
-每个位置和每件物品都能生成二维码，可以「保存为图片」打印出来贴在箱子、抽屉、收纳盒上。之后用扫码功能扫一下：
-- 扫位置码 → 直接跳到该位置，列出里面所有东西（含下级位置）
-- 扫物品码 → 直接打开这件物品的详情
+The camera requests maximum resolution (1920×1080, continuous autofocus) and supports the torch, so barcodes in dim light or behind reflections still scan. One item can carry multiple barcodes, so different packagings of the same product don't conflict. Uniqueness is enforced: a duplicate is rejected and the app tells you which item already owns that barcode. Check digits are validated as you type — a mistyped EAN-13 is flagged immediately.
 
-二维码是矢量图，打印出来放大也不糊。码里存的是本机的对象编号，所以换手机、重装 App 之后照样能扫。
+### Books and magazines are recognized automatically
 
-**物品图片**
-拍一张照就能给物品配图。列表里显示缩略图，一眼认得出是什么；点缩略图看大图。全尺寸照片单独存文件，不会把数据文件撑大——手机上也能放心拍。图片会跟着同步到 NAS，换设备也在。
+Scan an ISBN from the back of a book (`978` / `979`) or a periodical barcode from a magazine cover (`977`), and the app asks "Add as a book?" — confirming opens the form as a book with the barcode already filled in. You don't have to decide whether "this counts as an item". The check-digit message says "ISBN", not "EAN-13".
 
-**保质期**
-可以只填到期日，也可以填「生产日期 + 保质期天数」自动算。到期前多少天算临期可以自己设（默认 7 天）。过期和临期物品在总览、保质期页都有专门分区，软件启动时会弹通知提醒。
+### Internal codes for things without a barcode
 
-**日期可以写速记**
+A soy sauce bottle has a barcode; your rental contract or a bag of home-packed peppercorns does not. Those get an **internal code** on save, in the form `HS-2026-0001` (prefix – year – sequence, incremented per year, deleted numbers are never reused).
 
-填日期的地方不用去翻日历，直接写就行：
+- The code is printed on a QR label — stick it on, and if the QR gets scuffed you can still type the code
+- Typing or scanning anything starting with `HS-` **opens that record directly** instead of creating a new one
+- If nothing matches, the app asks whether to create a record with that code — it never silently drops an empty record
+- Codes are searchable: searching `HS-2026-0001` finds it
 
-| 写法 | 意思 |
+### QR labels for locations and items
+
+Every location and every item can generate a QR code, saved as an image and printed for boxes, drawers, and storage bins. Scanning one later:
+
+- **Location code** → jumps to that location and lists everything inside, including descendants
+- **Item code** → opens that item's detail page
+
+QR codes are vector graphics, so they stay sharp when printed large. They encode the local object ID, so they keep working after switching phones or reinstalling the app.
+
+### Item photos
+
+Take a photo and attach it to an item. The list shows a thumbnail so you can recognize it instantly; tap it for the full image. Full-size photos are stored as separate files, so the data file doesn't balloon — safe to shoot on a phone. Photos sync to the NAS and follow you across devices.
+
+### Expiry tracking
+
+You can enter just an expiry date, or a **production date + shelf life in days** and let the app compute it. The "expiring soon" window is configurable (7 days by default). Expired and soon-to-expire items get dedicated sections on the dashboard and the expiry page, and the app shows a notification at startup.
+
+### Date shorthand
+
+Date fields accept plain text — no calendar picking required:
+
+| Input | Meaning |
 |---|---|
-| `2027-05-17` | 直接写日期（`2027/5/17`、`2027年5月17日`、`20270517` 都认） |
-| `+1y` / `1年` | 一年后（还有 `+3m` / `3个月`、`+30d` / `30天`、`+2w` / `2周`） |
-| `-30天` | 30 天前（填生产日期时用） |
-| `0517` | 5 月 17 日。**今年已经过了就算明年**，所以填「下次到期」很省事 |
-| `x` | 不设期限（把日期清空） |
-| `今天` / `明天` / `昨天` | 就是字面意思 |
+| `2027-05-17` | An explicit date (`2027/5/17`, `2027年5月17日`, `20270517` also work) |
+| `+1y` / `1年` | One year from now (also `+3m` / `3个月`, `+30d` / `30天`, `+2w` / `2周`) |
+| `-30天` | 30 days ago (useful for production dates) |
+| `0517` | May 17. **If that date has already passed this year, it means next year** — handy for "next expiry" |
+| `x` | No expiry (clears the date) |
+| `今天` / `明天` / `昨天` | Today / tomorrow / yesterday |
 
-写完离开输入框，下面会显示「已理解为 2027-05-17」，看一眼就知道对不对。
-看不懂的写法会在保存时被拦下来，**不会悄悄存成空值**——不然你会以为保质期填好了。
+On blur, the field shows "interpreted as 2027-05-17" so you can confirm at a glance. Anything unparseable is rejected on save — it is **never silently stored as empty**, which would leave you believing the expiry was set.
 
-**其他**
-- 数量增减、用完自动提示删除
-- **批量整理**：物品清单点「批量整理」进入多选，勾一批一次归位到某个位置 —— 收拾屋子时不用一件件点开改
-- 27 个预置分类（食品/药品/日化/清洁/五金/文具/衣物，办公资料 5 类，会计专用 6 类，书籍阅读 3 类，生活扩展 5 类）。在「设置 → 管理分类」里能新建、改名、换颜色、删除；录到一半才发现缺分类的话，表单里的分类下拉旁边就有「＋ 新建」，不用退出去建好再回来
-- 分类和标签，可按分类筛选；筛选区每行都带小标题（类型 / 分类 / 保质期），分类多了会自动收进「更多分类」，不会把屏幕铺满
-- 搜索支持名称、条码、内部编码、备注、位置路径，资料还能按文件编号/单位/金额搜
-- 办公资料页可按年度、是否已过保管期筛；图书页可按阅读状态筛
-- 统计页：记录总数（按物品/资料/图书拆开）、分类分布、位置分布、近 6 个月入库趋势、总价值估算
-- 导出 JSON 完整备份 / **导出 CSV 用 Excel 看**：CSV 含全部三类记录，表头取三类字段的并集（不适用的留空），用「类型」列一筛就是一类；资料的文件编号/年度/金额/保管期限、图书的作者/出版社/阅读状态都在里面
-- 导入支持合并或整体替换
+### Other features
 
-## 目录结构
+- Quantity +/−, with a prompt to delete when an item runs out
+- **Bulk organize**: tap "Bulk organize" on the Goods tab to multi-select a batch and move them all to one location — no more opening items one by one while tidying up
+- **27 preset categories** (food / medicine / household / cleaning / hardware / stationery / clothing; 5 for documents, 6 accounting-specific, 3 for reading, 5 extended household). Create, rename, recolor, or delete them under **Settings → Manage categories**. If you discover a missing category mid-entry, the form's category dropdown has a **＋ New** button — no need to exit and come back
+- Categories and tags, filterable by category; each filter row has a small heading (Type / Category / Expiry), and extra categories collapse into "More categories" instead of filling the screen
+- Search covers name, barcode, internal code, notes, and location path; documents are also searchable by document number, issuer, and amount
+- Documents can be filtered by year and whether the retention period has passed; books by reading status
+- Statistics page: total records (split by goods / documents / books), category distribution, location distribution, 6-month intake trend, and total value estimate
+- Export a complete JSON backup, or **export CSV for Excel**: the CSV contains all three record types, with a header that is the union of their fields (inapplicable cells left empty). Filter by the "Type" column to see one kind. Document number / year / amount / retention period and book author / publisher / reading status are all included
+- Import supports merge or full replace
+
+## Project layout
 
 ```
 home-storage/
 ├── src/
-│   ├── main/            Electron 主进程
-│   │   ├── main.js      窗口、IPC、系统通知
-│   │   ├── preload.js   安全桥接
-│   │   ├── store.js     数据层（物品/位置/分类/条码/保质期）
-│   │   └── sync.js      同步客户端
-│   └── renderer/        界面（电脑端和手机端共用同一套）
+│   ├── main/            Electron main process
+│   │   ├── main.js      Window, IPC, system notifications
+│   │   ├── preload.js   Secure bridge
+│   │   ├── store.js     Data layer (items / locations / categories / barcodes / expiry)
+│   │   └── sync.js      Sync client
+│   └── renderer/        UI (shared by desktop and mobile)
 │       ├── index.html
 │       ├── css/style.css
 │       └── js/
-│           ├── zxing.min.js   条码/二维码识别与生成（随包发布，不联网）
-│           ├── qr.js          二维码载荷的生成与解析
-│           ├── icons.js       内置矢量物品图标库（82 个 / 9 组）
-│           ├── util.js        工具函数 + 条码扫描器
-│           ├── components.js  弹窗、提示、表单
-│           ├── views.js       九个页面
-│           └── app.js         主控制器
-├── mobile/              安卓端
-│   ├── platform/        手机端适配层
-│   │   ├── 01-shim.js     浏览器运行环境（文件/路径/加密/网络）
-│   │   ├── 02-mobile.css  手机布局
-│   │   └── 03-bootstrap.js 装配 window.api
-│   ├── android/         安卓工程（免 Gradle）
+│           ├── zxing.min.js   Barcode / QR recognition and generation (bundled, offline)
+│           ├── qr.js          QR payload encoding and parsing
+│           ├── icons.js       Built-in vector icon library (82 icons / 9 groups)
+│           ├── util.js        Utilities + barcode scanner
+│           ├── components.js  Modals, toasts, forms
+│           ├── views.js       Nine screens
+│           └── app.js         Main controller
+├── mobile/              Android client
+│   ├── platform/        Mobile adaptation layer
+│   │   ├── 01-shim.js       Browser runtime (files / paths / crypto / network)
+│   │   ├── 02-mobile.css    Mobile layout
+│   │   └── 03-bootstrap.js  Wires up window.api
+│   ├── android/         Android project (Gradle-free)
 │   │   ├── AndroidManifest.xml
 │   │   ├── src/.../MainActivity.java
-│   │   ├── res/           图标、文字、主题
-│   │   └── assets/www/    打包好的界面（自动生成）
-│   ├── build-mobile.js  打包界面资源
-│   ├── make-icon.js     生成应用图标
-│   ├── build-apk.js     一键打出签名 APK
-│   └── home-storage.jks 签名证书（别删）
-├── server/              NAS 上的同步服务
-│   ├── index.js         服务端（账号 + 增量同步 + 手机版网页托管）
-│   ├── public/          手机版网页（由 npm run build:mobile-assets 生成，部署时要一起传上 NAS）
+│   │   ├── res/           Icons, strings, theme
+│   │   └── assets/www/    Packaged UI (generated)
+│   ├── build-mobile.js  Builds UI assets
+│   ├── make-icon.js     Generates the app icon
+│   ├── build-apk.js     One-command signed APK build
+│   └── home-storage.jks Signing keystore (do not delete)
+├── server/              Sync service for the NAS
+│   ├── index.js         Server (accounts + incremental sync + mobile web hosting)
+│   ├── public/          Mobile web app (generated by npm run build:mobile-assets; deploy with the server)
 │   ├── Dockerfile
 │   └── docker-compose.yml
 ├── scripts/
-│   ├── fetch-tool.js    打包辅助：下载构建工具包
-│   ├── icon-preview.js  开发辅助：把图标库渲染成一张图，改图标后用它亲眼检查
-│   ├── nas-diff.js      开发辅助：比对本地与 NAS 上的网页资源，列出该传哪几个文件
-│   ├── review-check.js  开发辅助：代码规范自检（npm run review）
-│   └── sandbox/         受限环境专用工具（spawnSync 不可用时才需要，正常开发可整个删掉）
-├── .gitattributes       行尾策略（Windows 版 Git 默认 autocrlf=true，靠它压住）
-├── screenshots/         界面截图（电脑端 + mobile/ 手机端）
-├── test/                十三套自动化测试（共 1601 项，npm test 一次跑完）
-├── 打包.bat             Windows 一键打包脚本
-├── 代码规范.md           改代码前先看：项目硬约束 + Review 检查清单
-├── 工程实践参考.md        工程实践与外部参考
-├── Windows11使用指南.md   Windows 使用 + 自建打包教程
-├── 安卓手机使用指南.md     安卓端安装与使用
-└── 群晖部署指南.md        群晖 NAS 部署教程
+│   ├── fetch-tool.js    Build helper: downloads build tool packages
+│   ├── icon-preview.js  Dev helper: renders the icon library to an image for visual review
+│   ├── nas-diff.js      Dev helper: diffs local vs. NAS web assets, lists files to upload
+│   ├── review-check.js  Dev helper: code-standard self-check (npm run review)
+│   └── sandbox/         Restricted-environment helpers (only needed when spawnSync is unavailable)
+├── .gitattributes       Line-ending policy (keeps Windows Git's autocrlf in check)
+├── screenshots/         UI screenshots (desktop + mobile)
+├── test/                13 automated suites (1,601 assertions; npm test runs them all)
+├── 打包.bat             One-click Windows packaging script
+├── 代码规范.md           Read before editing: hard constraints + review checklist
+├── 工程实践参考.md        Engineering practices and external references
+├── Windows11使用指南.md   Windows usage + build tutorial
+├── 安卓手机使用指南.md     Android install and usage
+└── 群晖部署指南.md        Synology NAS deployment guide
 ```
 
-## 运行
+## Running
 
-需要 Node.js 18 以上。
+Requires Node.js 18 or newer.
 
 ```bash
 cd home-storage
 npm install
-npm start              # 启动
-npm run dev            # 带开发者工具
-npm test               # 跑全部测试（1601 项）
-npm run review         # 代码规范自检（产物有没有重建、行尾、写死的版本号…）
-npm run icon:preview   # 把图标库渲染成图，改过 icons.js 后用它亲眼检查
+npm start              # Launch
+npm run dev            # Launch with DevTools
+npm test               # Run all tests (1,601 assertions)
+npm run review         # Code-standard self-check (rebuilt artifacts, line endings, hardcoded versions…)
+npm run icon:preview   # Render the icon library to an image; use it after editing icons.js
 ```
 
-**改代码前先读 [`代码规范.md`](代码规范.md)** —— 里面是项目的硬约束（每条都对应一个真踩过的坑）和一份 Review 检查清单。
-`npm test` 管不住的几类问题（忘了重建产物、行尾被改乱、接口形状不一致），由 `npm run review` 兜。
+**Read [`代码规范.md`](代码规范.md) before changing code** *(Chinese)* — it documents the project's hard constraints (each one is a bug that was actually hit) and a review checklist.
+A few classes of problems that `npm test` cannot catch — stale build artifacts, mangled line endings, inconsistent API shapes — are covered by `npm run review`.
 
-改界面布局或图标后，建议再生成一次截图亲眼看一下——位置/尺寸类断言可能全部通过而界面实际是坏的（踩过：手机端标签被撑成整屏宽、窄屏下物品行折成三行）：
+After changing layout or icons, regenerate screenshots and look at them. Position/size assertions can all pass while the UI is visibly broken (both have happened: mobile tabs stretched to full screen width, item rows wrapping onto three lines on narrow screens):
 
 ```bash
-HS_SHOT_DIR=screenshots node test/test-e2e.js                    # 电脑端 19 张
-HS_MUI_SHOT_DIR=screenshots/mobile node test/test-mobile-ui.js   # 手机端 17 张
+HS_SHOT_DIR=screenshots node test/test-e2e.js                    # 19 desktop screenshots
+HS_MUI_SHOT_DIR=screenshots/mobile node test/test-mobile-ui.js   # 17 mobile screenshots
 ```
 
-数据存在这里（自动创建）：
-- Windows：`%APPDATA%/home-storage/data/storage.json`
-- macOS：`~/Library/Application Support/home-storage/data/storage.json`
-- Linux：`~/.config/home-storage/data/storage.json`
+Data is stored here (created automatically):
 
-写入采用「先写临时文件再改名」的原子方式，并自动保留一份 `.bak` 备份，断电不会把数据写坏。
+- Windows: `%APPDATA%/home-storage/data/storage.json`
+- macOS: `~/Library/Application Support/home-storage/data/storage.json`
+- Linux: `~/.config/home-storage/data/storage.json`
 
-## 打包成安装包
+Writes are atomic (temp file, then rename) and a `.bak` copy is kept, so a power cut cannot corrupt your data.
+
+## Building an installer
 
 ### Windows
 
-**推荐直接双击项目根目录的 `打包.bat`**，它会自动完成以下工作：
+**Double-click `打包.bat` in the project root.** It handles everything:
 
-1. 检查 Node.js 环境
-2. 首次运行时安装依赖（走国内镜像）
-3. 配置 electron-builder 下载镜像
-4. 处理 `winCodeSign` 工具包的符号链接问题（见下）
-5. 执行打包
+1. Checks the Node.js environment
+2. Installs dependencies on first run (using a China-friendly mirror)
+3. Configures the electron-builder download mirror
+4. Works around the `winCodeSign` symlink issue (see below)
+5. Runs the build
 
-手动执行的话：
+Manually:
 
 ```bash
 set ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/
@@ -206,16 +218,16 @@ set CSC_IDENTITY_AUTO_DISCOVERY=false
 npm run build:win
 ```
 
-> **首次打包可能报「客户端没有所需的特权」**
+> **First build may fail with "client does not have the required privilege"**
 >
-> 原因：electron-builder 需要的 `winCodeSign` 工具包里混有 macOS 的 `.dylib`
-> 符号链接，而 Windows 普通账户没有创建符号链接的特权，解压会中断。
+> Cause: the `winCodeSign` package electron-builder needs contains macOS `.dylib`
+> symlinks, and a normal Windows account cannot create symlinks, so extraction aborts.
 >
-> 解决办法：先用 7-Zip 的 `-snl` 参数（把符号链接存成普通文件）手动解压到
-> `%LOCALAPPDATA%\electron-builder\Cache\winCodeSign\winCodeSign-2.6.0\`，
-> 之后 electron-builder 直接复用缓存，不再触发解压。`打包.bat` 已内置这一步。
+> Fix: extract it manually with 7-Zip's `-snl` flag (store symlinks as regular files) into
+> `%LOCALAPPDATA%\electron-builder\Cache\winCodeSign\winCodeSign-2.6.0\`.
+> electron-builder then reuses the cache and skips extraction. `打包.bat` already does this.
 >
-> 也可以改用管理员身份运行，或开启 Windows 开发者模式。
+> Alternatively, run as administrator or enable Windows Developer Mode.
 
 ### macOS / Linux
 
@@ -224,174 +236,170 @@ npm run build:mac
 npm run build:linux
 ```
 
-产物在 `dist/` 目录里，装完就是普通桌面软件。
+Artifacts land in `dist/`; the result is a normal desktop application.
 
 ---
 
-## 打包成安卓 APK
+## Building an Android APK
 
-不依赖 Android Studio，也不用 Gradle，直接用 Android SDK 的命令行工具打：
+No Android Studio and no Gradle — it builds directly with the Android SDK command-line tools:
 
 ```bash
 npm run build:apk
 ```
 
-产物在 `mobile/dist/家庭收纳-1.1.0.apk`，传到手机上点开就能装。
+The artifact is `mobile/dist/家庭收纳-1.1.0.apk`; copy it to a phone and tap to install.
 
-需要装好 Android SDK（含 build-tools 29.0.3、platforms/android-29）和 JDK 8。路径默认是
-`D:\tools\androidsdk` 和 `C:\Program Files\Java\jdk1.8.0_333`，不一样的话用环境变量
-`ANDROID_SDK_ROOT` / `JAVA_HOME` 指定。
+You need the Android SDK (build-tools 29.0.3, platforms/android-29) and JDK 8. The default paths are `D:\tools\androidsdk` and `C:\Program Files\Java\jdk1.8.0_333`; override them with `ANDROID_SDK_ROOT` / `JAVA_HOME`.
 
-> **详细安装和使用说明见 [安卓手机使用指南.md](安卓手机使用指南.md)**
+> **Detailed install and usage instructions: [安卓手机使用指南.md](安卓手机使用指南.md)** *(Chinese)*
 
-### 手机端是怎么复用电脑端界面的
+### How mobile reuses the desktop UI
 
-手机端没有另写一套界面，而是把电脑端原封不动装进一个 WebView：
+The Android client does not reimplement the UI; it puts the desktop UI unchanged inside a WebView:
 
-- `src/main/store.js`（数据层）和 `src/main/sync.js`（同步层）**一个字符都没改**；
-- `mobile/platform/01-shim.js` 提供它们在浏览器里需要的运行环境；
-- `mobile/platform/03-bootstrap.js` 把数据层装配成渲染层认识的 `window.api`，
-  接口形状和电脑端的 `preload.js` 完全一致；
-- `mobile/platform/02-mobile.css` 把桌面布局改成手机布局（侧栏变底部标签栏、弹窗从底部滑出）。
+- `src/main/store.js` (data layer) and `src/main/sync.js` (sync layer) are **byte-for-byte unchanged**;
+- `mobile/platform/01-shim.js` provides the browser runtime they need;
+- `mobile/platform/03-bootstrap.js` assembles the data layer into the `window.api` shape the renderer expects, identical to the desktop `preload.js`;
+- `mobile/platform/02-mobile.css` turns the desktop layout into a mobile one (sidebar becomes a bottom tab bar, modals slide up from the bottom).
 
-好处是两边行为天然一致——电脑上怎么算的，手机上就怎么算。
+The benefit is naturally consistent behavior — whatever the desktop computes, the phone computes the same way.
 
-几个绕不开的技术点，都记在 `安卓手机使用指南.md` 第八节里了，简单说：
+Two unavoidable technical details (documented in section 8 of the Android guide):
 
-- 页面挂在虚拟的 `https://hs.local` 上而不是 `file://`。因为扫码要用的 `getUserMedia`
-  只在安全源下可用，而 `file://` 不算安全源；同时 `localStorage` 在 `file://` 下
-  部分版本 WebView 根本不落盘，那等于用户存的东西会丢。
-- 同步请求走原生 `HttpURLConnection` 发，不让页面自己发。页面在 https 源、NAS 是局域网
-  http，页面直接发会同时踩跨域预检和混合内容两个限制。
+- Pages are served from a virtual `https://hs.local` origin rather than `file://`. The camera's `getUserMedia` only works in a secure context, and `file://` is not one; also, `localStorage` on `file://` does not persist in some WebView versions, which would mean users lose their data.
+- Sync requests go through native `HttpURLConnection` rather than page-level `fetch`. The page is on an https origin while the NAS is plain http on the LAN; a direct request would hit both CORS preflight and mixed-content restrictions.
 
 ---
 
-## 部署 NAS 同步服务
+## Deploying the NAS sync service
 
-同步是可选的。不开也能正常用，只是数据只在本机。
+Sync is optional. The app works fine without it; data just stays on one machine.
 
-> **群晖用户请看 [群晖部署指南.md](群晖部署指南.md)**，里面有 Container Manager 的完整图文步骤、故障排查和公网访问方案。
+> **Synology users: see [群晖部署指南.md](群晖部署指南.md)** *(Chinese)* for complete Container Manager walkthroughs, troubleshooting, and remote-access options.
 >
-> 下面是与群晖无关的通用部署说明。
+> The instructions below are generic.
 
-### 一、在 NAS 上部署
+### 1. Deploy on the NAS
 
-把整个 `server` 目录传到 NAS 上（比如 `/volume1/docker/home-storage`），然后：
+Copy the entire `server` directory to the NAS (e.g. `/volume1/docker/home-storage`), then:
 
 ```bash
 cd /volume1/docker/home-storage
 
-# 建议先改掉默认密码和密钥
+# Change the default password and secret first
 vim docker-compose.yml
 ```
 
-要改的两个地方：
-- `DB_PASSWORD` 和 api 服务里对应的 `DB_PASSWORD` 必须一致，改成一个自己的强密码
-- `JWT_SECRET` 换成一串随机字符（随便按键盘敲 40 位就行）
+Two things to change:
+- `DB_PASSWORD` and the matching `DB_PASSWORD` in the api service must be identical — set a strong password
+- Replace `JWT_SECRET` with random characters (mash the keyboard for ~40 characters)
 
-然后启动：
+Then start:
 
 ```bash
 docker compose up -d --build
 ```
 
-等服务起来（约 30 秒），验证一下：
+Wait about 30 seconds and verify:
 
 ```bash
 curl http://localhost:8787/api/health
-# 返回 {"ok":true,"name":"家庭收纳同步服务","version":"1.0.0","db":true}
+# {"ok":true,"name":"家庭收纳同步服务","version":"1.0.0","db":true}
 ```
 
-### 二、在客户端连接
+### 2. Connect from the client
 
-打开软件 → 设置 → 数据同步：
+Open the app → Settings → Data sync:
 
-1. 「服务器地址」填 `http://NAS的IP:8787`，例如 `http://192.168.1.100:8787`
-2. 填账号密码（第一次用点「注册新账号」）
-3. 点「登录并保存」
+1. Set **Server address** to `http://NAS_IP:8787`, e.g. `http://192.168.1.100:8787`
+2. Enter credentials (use "Register a new account" the first time)
+3. Click **Log in and save**
 
-侧栏底部的同步状态会变成绿色。之后点「立即同步」就会把本机改动推到 NAS，同时把其他设备的改动拉回来。
+The sync status at the bottom of the sidebar turns green. **Sync now** pushes local changes to the NAS and pulls changes from other devices.
 
-### 三、其他设备
+### 3. Other devices
 
-在每台设备上装好客户端，填同一个服务器地址，用同一个账号登录即可。建议给每台设备在「设备名称」里起个名字（客厅电脑 / 笔记本），方便区分。
+Install the client on each device, use the same server address and the same account. Give each device a name (Living room PC / Laptop) to tell them apart.
 
-### 四、不装 App 也能用（iPhone / 平板）
+### 4. No app required (iPhone / tablet)
 
-服务端自带一个手机版网页，**不用装任何东西**。iPhone、iPad、安卓手机、平板都能直接用，功能和不装 App 的手机版一致（能增删改、能同步）。
+The server ships a mobile web app — **nothing to install**. iPhone, iPad, Android phones, and tablets all work, with the same feature set as the mobile app (create, edit, delete, sync).
 
-1. 手机浏览器打开 `http://NAS的IP:8787/app/`
-   末尾那个斜杠别省；也别用 `http://NAS的IP:8787`，那是状态页
-2. 点浏览器菜单里的「分享」→「添加到主屏幕」，之后从桌面图标直接打开，和 App 一样没有地址栏
-3. 首次打开是空的，去「设置 → 同步」填服务器地址、用同一个账号登录，数据就下来了
+1. Open `http://NAS_IP:8787/app/` in a mobile browser — keep the trailing slash; `http://NAS_IP:8787` without it is the status page
+2. Use the browser menu → **Share → Add to Home Screen**; it then opens from the home screen without an address bar, just like an app
+3. It starts empty: go to **Settings → Sync**, enter the server address, and log in with the same account to pull your data
 
-**扫码在这一种用法下用不了**：调摄像头要求 https（或 localhost），局域网 `http://` 会被浏览器直接拒绝。这时扫码页会提示「这个环境没有可用的摄像头」，开始按钮变灰，用手动输入条码或扫码枪即可——其他功能都不受影响。想让扫码也能用，就给 NAS 配个 https（见上面「方案 B」）。
+**Scanning is unavailable in this mode**: camera access requires https (or localhost), and browsers reject `http://` on a LAN. The scan page says "no camera available in this environment" and disables the start button; use manual barcode entry or a hardware scanner — everything else works. To enable scanning, put the NAS behind https (see option B below).
 
-### 五、不在家里也能用
+### 5. Using it outside the home
 
-局域网直连只在家里有效。想在外面也能同步，两条路：
+Direct LAN access only works at home. Two options for syncing elsewhere:
 
-**方案 A：内网穿透（推荐）**
-用 frp、Tailscale、ZeroTier 或蒲公英之类的工具。Tailscale 最简单，NAS 和手机各装一个就组成虚拟局域网，然后服务器地址填 NAS 的虚拟 IP。
+**Option A: Mesh VPN (recommended)**
+Use frp, Tailscale, ZeroTier, or similar. Tailscale is the simplest: install it on the NAS and the phone, and they form a virtual LAN; then use the NAS's virtual IP as the server address.
 
-**方案 B：反向代理加 HTTPS**
-如果 NAS 已有公网 IP 或域名，用 Nginx Proxy Manager 加个反代指向 `http://NAS_IP:8787`，配好证书后用 `https://你的域名` 访问。记得同时把注册功能关掉（`ALLOW_REGISTER: "false"`），避免别人注册账号。
+**Option B: Reverse proxy with HTTPS**
+If the NAS has a public IP or domain, point Nginx Proxy Manager at `http://NAS_IP:8787`, install a certificate, and use `https://your-domain`. Also disable registration (`ALLOW_REGISTER: "false"`) so nobody else can create accounts.
 
-### 同步怎么处理冲突
+### How conflicts are resolved
 
-- 每条记录都带修改时间。同步时只传上次同步之后改动过的数据
-- 同一件物品在两台设备都改过，**修改时间新的那个生效**
-- 被覆盖的那份不会丢，会保留成一个叫「xxx（冲突副本）」的独立条目，你可以自己判断要留哪个
-- 有冲突时，同步完成后会自动弹出**冲突清单**，逐条给出「打开 / 用副本覆盖 / 保留 / 删掉副本」四个选择：
-  「打开」是去看那份副本，「用副本覆盖」是把本机这份换回正本（会盖掉 NAS 上较新的改动，要先确认），
-  「保留」是留着（下次同步会上传到 NAS），「删掉副本」是彻底删掉
-- 如果两边改的**不是同一个名字**，清单里会额外写出本机那份叫什么，免得你对不上号
-- 关掉清单也不会自动处理，**下次同步还会再问**——软件不替用户决定留哪份，也不偷偷删他的改动
-- 删除采用软删除，同步后其他设备上也会消失，不会出现「删了又回来」的情况
+- Every record carries a modification time. Sync only transfers data changed since the last sync
+- If the same item was modified on two devices, **the newer modification wins**
+- The overwritten version is not lost: it is kept as a separate entry named "xxx (conflict copy)"
+- When conflicts exist, a **conflict list** appears after syncing, offering four choices per item: **Open / Overwrite with copy / Keep / Delete copy**
+  — Open views the copy; Overwrite with copy replaces the local record with the copy (this discards the newer NAS change, so it asks first); Keep retains it (it uploads on the next sync); Delete copy removes it permanently
+- If the two versions have **different names**, the list also shows the local name so you can match them up
+- Closing the list does nothing automatically — **it asks again on the next sync**. The app never decides which version to keep for you and never silently deletes your changes
+- Deletes are soft deletes, so they propagate to other devices instead of the record reappearing
 
-### 环境变量
+### Environment variables
 
-| 变量 | 默认值 | 说明 |
+| Variable | Default | Description |
 |---|---|---|
-| `PORT` | `8787` | 服务端口 |
-| `DB_HOST` | `db` | 数据库地址 |
-| `DB_PORT` | `5432` | 数据库端口 |
-| `DB_NAME` | `homestorage` | 数据库名 |
-| `DB_USER` | `home` | 数据库用户 |
-| `DB_PASSWORD` | `home123456` | 数据库密码，**务必修改** |
-| `JWT_SECRET` | `home-storage-change-me` | 令牌密钥，**务必修改** |
-| `ALLOW_REGISTER` | `true` | 是否允许注册新账号 |
-| `LOGIN_MAX_FAILS` | `5` | 同一账号连续登录失败几次后锁定 |
-| `LOGIN_LOCK_MS` | `900000` | 锁定时长（毫秒，默认 15 分钟） |
-| `REGISTER_MAX` | `10` | 同一来源一小时内最多注册几个账号 |
+| `PORT` | `8787` | Service port |
+| `DB_HOST` | `db` | Database host |
+| `DB_PORT` | `5432` | Database port |
+| `DB_NAME` | `homestorage` | Database name |
+| `DB_USER` | `home` | Database user |
+| `DB_PASSWORD` | `home123456` | Database password — **change this** |
+| `JWT_SECRET` | `home-storage-change-me` | Token secret — **change this** |
+| `ALLOW_REGISTER` | `true` | Whether new accounts can register |
+| `LOGIN_MAX_FAILS` | `5` | Failed logins before an account is locked |
+| `LOGIN_LOCK_MS` | `900000` | Lock duration in ms (15 minutes by default) |
+| `REGISTER_MAX` | `10` | Max accounts per source per hour |
 
-### 备份 NAS 上的数据
+### Backing up NAS data
 
-数据库文件在 `server/data/postgres` 目录里，直接备份这个目录即可。或者用：
+The database files live in `server/data/postgres`; back up that directory. Or:
 
 ```bash
 docker exec home-storage-db pg_dump -U home homestorage > backup.sql
 ```
 
-## 接口
+## API
 
-| 方法 | 路径 | 说明 |
+| Method | Path | Description |
 |---|---|---|
-| GET | `/api/health` | 健康检查 |
-| POST | `/api/register` | 注册 `{username, password}` |
-| POST | `/api/login` | 登录 `{username, password, device}` |
-| POST | `/api/sync` | 增量同步（需 Bearer 令牌） |
-| GET | `/api/stats` | 当前账号数据统计 |
-| GET | `/app/` | 手机版网页（不装 App 直接用，见上面「四、不装 App 也能用」） |
+| GET | `/api/health` | Health check |
+| POST | `/api/register` | Register `{username, password}` |
+| POST | `/api/login` | Log in `{username, password, device}` |
+| POST | `/api/sync` | Incremental sync (Bearer token required) |
+| GET | `/api/stats` | Account data statistics |
+| GET | `/app/` | Mobile web app (no install required) |
 
-## 几个说明
+## Design notes
 
-- 三类东西（物品/资料/图书）存在**同一张表**里，靠一个 `kind` 字段区分。拆成三张表就要写三套同步、三套搜索、三套统计，而其中九成逻辑是一样的。同一张表也意味着跨类搜索（搜「合同」能同时搜到资料和物品）天然可用。
-- 内部编码的流水号是**按年**递增的：`HS-2026-0001`、`HS-2026-0002`…… 跨年重新从 0001 开始，年份就在编码里，不会混。取号时会连**已删除**的记录一起看，所以删掉一条再新建，不会复用它的号——否则旧的二维码贴纸扫出来会指向新记录。
-- 老版本的数据文件打开时会**自动升级**（补上 `kind`/`icon`/`code`/`extra` 字段、补齐新增的预置分类）。升级只做加法：你改过的分类名和颜色不会被动，你删掉的预置分类也不会自己长回来。
-- 条码和二维码识别都用随软件一起发布的 ZXing，**不依赖系统能力、不联网、不需要装任何东西**。有些浏览器自带的识别接口在安卓 WebView 里根本不存在，所以特意没用它。
-- 物品图片的全尺寸照片单独存成文件，数据文件里只放小缩略图。这样数据文件不会因为几张照片就变成几 MB，手机上（存储配额小）也不会写不进去。照片**没存进去时会明确报错**，而不是提示「已保存」却点开是空白：手机的存储只有 5MB，一张照片就可能写满，写满时除了保存失败还会额外弹一条提示，告诉你去导出备份、清理旧照片。导入备份和同步时如果有照片没落地，也会告诉你具体有几张。
-- 物品图标是内置的矢量图形（SVG），不是图片文件。好处是：不占空间、任何分辨率都清晰、能跟着主题色走、完全离线。
-- 数据文件每次保存前都会留一份 `storage.json.bak`。**主文件读不动（写坏了、或被杀软/同步软件动了）时会自动从备份恢复**；如果两份都读不动，损坏的文件会被**改名留档**成 `storage.json.corrupt-<时间>` 而不是被覆盖——原始内容还在，还有人工挽救的余地。整个过程会写进日志。
-- 数据默认只存在本机，不上传任何地方。只有你自己开启同步，才会发到你自己的 NAS。
-- 单机使用完全离线可用，断网也能正常记录，联网后再同步。
+- The three record types (goods / documents / books) live in **one table**, distinguished by a `kind` field. Splitting them into three tables would mean three sync implementations, three searches, and three statistics pipelines, while 90% of the logic is identical. One table also makes cross-type search natural: searching "contract" finds both documents and goods.
+- Internal code sequence numbers increment **per year**: `HS-2026-0001`, `HS-2026-0002`, … and restart at `0001` in a new year; the year is part of the code, so they never collide. Allocation also considers **deleted** records, so deleting and re-creating never reuses a number — otherwise an old printed QR sticker would point at a new record.
+- Old data files are **migrated automatically** on open (adding `kind` / `icon` / `code` / `extra`, and any new preset categories). Migration is additive only: your renamed categories and colors are untouched, and preset categories you deleted do not come back.
+- Barcode and QR recognition use a bundled copy of ZXing: **no system dependency, no network, nothing to install**. Some browsers' built-in detection APIs simply don't exist in Android WebView, which is why they aren't used.
+- Full-size photos are stored as separate files; the data file holds only a small thumbnail. This keeps the data file from growing to megabytes because of a few photos, and avoids write failures on phones with small storage quotas. A photo that fails to save is **reported as an error** instead of claiming "saved" and showing a blank image: phone storage can be as small as 5 MB, and one photo can fill it. On failure the app also suggests exporting a backup and cleaning up old photos. Imports and syncs report exactly how many photos failed to land.
+- Item icons are built-in vector graphics (SVG), not image files: no disk cost, sharp at any resolution, theme-aware, fully offline.
+- Before every save, a `storage.json.bak` copy is kept. **If the main file cannot be read (corrupted, or touched by antivirus / a sync tool), it is restored from the backup automatically.** If neither can be read, the damaged file is **renamed to `storage.json.corrupt-<timestamp>`** instead of being overwritten — the original content survives for manual recovery. Every step is logged.
+- Data stays on your machine by default and is never uploaded anywhere. Only if you enable sync does it go to your own NAS.
+- Standalone use is fully offline: record normally without a network, and sync when you're back online.
+
+## License
+
+MIT

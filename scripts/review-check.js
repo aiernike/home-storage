@@ -359,7 +359,7 @@ section('[6] 没有写死的版本号（规范 §3.3）');
   }
 
   // 顺带确认文档里的产物名与当前版本一致（test-packaging 也查，这里给个即时反馈）
-  const docs = ['README.md', 'Windows11使用指南.md', '安卓手机使用指南.md'].filter(exists);
+  const docs = ['README.zh-CN.md', 'Windows11使用指南.md', '安卓手机使用指南.md'].filter(exists);
   const docBad = [];
   let docCount = 0;
   docs.forEach((rel) => {

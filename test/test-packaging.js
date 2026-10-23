@@ -152,7 +152,7 @@ if (exists('Windows11使用指南.md')) {
  */
 {
   const picks = [
-    ['README.md', [/共 (\d+) 项/, /跑全部测试（(\d+) 项）/]],
+    ['README.zh-CN.md', [/共 (\d+) 项/, /跑全部测试（(\d+) 项）/]],
     ['安卓手机使用指南.md', [/会跑全部 \*\*(\d+) 项\*\*/]],
     ['Windows11使用指南.md', [/会依次跑 (\d+) 项测试/]]
   ];
@@ -199,7 +199,7 @@ if (exists('Windows11使用指南.md')) {
  * 「家庭收纳-x.y.z.apk」这两种**客户端产物名**，不会误伤服务端示例。
  */
 {
-  const docs = ['README.md', 'Windows11使用指南.md', '安卓手机使用指南.md'];
+  const docs = ['README.zh-CN.md', 'Windows11使用指南.md', '安卓手机使用指南.md'];
   const bad = [];
   let checked = 0;
   docs.forEach((file) => {

@@ -682,4 +682,4 @@ npm run build:win    # 打包 Windows 安装程序
 
 部署到群晖 NAS 看 **`群晖部署指南.md`**。
 
-功能说明和完整文档看 **`README.md`**。
+功能说明和完整文档看 **`README.zh-CN.md`**（英文版是 `README.md`）。
